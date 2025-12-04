@@ -1,6 +1,7 @@
 const { addonBuilder, getInterface } = require("stremio-addon-sdk");
 const axios = require("axios");
 
+// Create addon builder with required catalogs array
 const builder = new addonBuilder({
   id: "org.example.recentshows",
   version: "1.0.0",
@@ -8,10 +9,13 @@ const builder = new addonBuilder({
   description: "Shows aired in the last 7 days excluding talk shows and news",
   resources: ["catalog", "meta"],
   types: ["series"],
+  catalogs: []  // REQUIRED
 });
 
+// Helper: format date YYYY-MM-DD
 const formatDate = (d) => d.toISOString().split("T")[0];
 
+// Fetch schedule for a single date
 async function fetchSchedule(dateStr) {
   try {
     const res = await axios.get(`https://api.tvmaze.com/schedule?country=US&date=${dateStr}`);
@@ -22,6 +26,7 @@ async function fetchSchedule(dateStr) {
   }
 }
 
+// Get shows and episodes from last 7 days
 async function getRecentShows() {
   const today = new Date();
   const lastWeek = new Date();
@@ -66,6 +71,7 @@ async function getRecentShows() {
   return Object.values(showsMap);
 }
 
+// CATALOG handler
 builder.defineCatalogHandler(async ({ type }) => {
   if (type !== "series") return { metas: [] };
   const shows = await getRecentShows();
@@ -80,10 +86,12 @@ builder.defineCatalogHandler(async ({ type }) => {
   };
 });
 
+// META handler
 builder.defineMetaHandler(async ({ type, id }) => {
   const shows = await getRecentShows();
   const show = shows.find((s) => s.id === id);
   return { id, type, episodes: show ? show.episodes : [] };
 });
 
+// Export the addon interface
 module.exports = getInterface(builder);
