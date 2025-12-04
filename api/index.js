@@ -1,12 +1,14 @@
 const { addonBuilder } = require("stremio-addon-sdk");
 const axios = require("axios");
+const fs = require("fs");
+const path = require("path");
 
 const builder = new addonBuilder({
   id: "org.example.recentshows",
   version: "1.0.0",
   name: "Recent Shows",
   description: "Shows aired in the last 3 days excluding talk shows/news",
-  resources: ["catalog","meta"],
+  resources: ["catalog", "meta"],
   types: ["series"],
   catalogs: [
     { type: "series", id: "recent", name: "Recent Shows" }
@@ -17,9 +19,19 @@ const axiosInstance = axios.create({ timeout: 3000 });
 const formatDate = (d) => d.toISOString().split("T")[0];
 
 let cache = { shows: [], lastFetch: 0 };
-const CACHE_DURATION = 15 * 60 * 1000; // 15 minutes
+const CACHE_DURATION = 15 * 60 * 1000;
 
-// Fetch last 3 days only
+// Load test cache immediately to avoid cold start issues
+try {
+  const rawCache = fs.readFileSync(path.join(__dirname, "../public/cache.json"));
+  cache.shows = JSON.parse(rawCache);
+  cache.lastFetch = Date.now();
+  console.log("Loaded initial cache with", cache.shows.length, "shows");
+} catch (err) {
+  console.error("Failed to load initial cache:", err.message);
+}
+
+// Async fetch from TVmaze (last 3 days)
 async function fetchCache() {
   const today = new Date();
   const last3Days = new Date();
@@ -71,22 +83,19 @@ async function fetchCache() {
 
   cache.shows = Object.values(showsMap);
   cache.lastFetch = Date.now();
-  console.log("Cache populated with", cache.shows.length, "shows");
+  console.log("Cache updated with", cache.shows.length, "shows");
 }
-
-// Start cache in background (do not block)
-setTimeout(fetchCache, 0);
 
 // Background updater
 async function updateCache() {
   if (Date.now() - cache.lastFetch < CACHE_DURATION) return;
-  fetchCache();
+  fetchCache(); // run async
 }
 
-// Catalog handler returns cached data immediately
+// Catalog handler
 builder.defineCatalogHandler(async ({ type }) => {
   if (type !== "series") return { metas: [] };
-  updateCache(); // refresh in background
+  updateCache(); // async background fetch
   return {
     metas: cache.shows.map(show => ({
       id: show.id,
@@ -105,4 +114,4 @@ builder.defineMetaHandler(async ({ type, id }) => {
   return { id, type, episodes: show ? show.episodes : [] };
 });
 
-module.exports = (req,res) => builder.getInterface(req,res);
+module.exports = (req, res) => builder.getInterface(req, res);
