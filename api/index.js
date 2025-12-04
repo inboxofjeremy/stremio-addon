@@ -11,7 +11,7 @@ const builder = new addonBuilder({
   catalogs: []
 });
 
-const formatDate = (d) => d.toISOString().split("T")[0");
+const formatDate = (d) => d.toISOString().split("T")[0];
 
 let cache = {
   shows: null,
