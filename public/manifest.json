@@ -1,8 +1,8 @@
 {
   "id": "org.example.recentshows",
   "version": "1.0.0",
-  "name": "Recent Shows (Test)",
-  "description": "Test addon with one show",
+  "name": "Recent Shows (TVmaze)",
+  "description": "Shows aired in the last 7 days excluding Talk Shows/News",
   "resources": ["catalog","meta"],
   "types": ["series"],
   "catalogs": [
@@ -11,4 +11,3 @@
   "idPrefixes": [],
   "endpoint": "https://stremio-addon-three.vercel.app/api"
 }
-
