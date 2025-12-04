@@ -1,6 +1,5 @@
 const { addonBuilder } = require("stremio-addon-sdk");
 
-// Minimal builder with one catalog
 const builder = new addonBuilder({
   id: "org.example.recentshows",
   version: "1.0.0",
@@ -13,7 +12,6 @@ const builder = new addonBuilder({
   ]
 });
 
-// Minimal test show
 const testShow = {
   id: "test-show",
   name: "Test Show",
@@ -33,17 +31,15 @@ const testShow = {
   ]
 };
 
-// Catalog handler returns the test show instantly
 builder.defineCatalogHandler(async ({ type }) => {
   if (type !== "series") return { metas: [] };
   return { metas: [testShow] };
 });
 
-// Meta handler returns the episodes of the test show
 builder.defineMetaHandler(async ({ type, id }) => {
   if (id === testShow.id) return { id, type, episodes: testShow.episodes };
   return { id, type, episodes: [] };
 });
 
-// Vercel export
+// ✅ THIS IS THE REQUIRED default export for Vercel
 module.exports = (req, res) => builder.getInterface(req, res);
