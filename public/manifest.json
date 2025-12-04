@@ -2,7 +2,7 @@
   "id": "org.example.recentshows",
   "version": "1.0.0",
   "name": "Recent Shows",
-  "description": "Shows aired in the last 7 days excluding talk shows/news",
+  "description": "Shows aired in the last 3 days excluding talk shows/news",
   "resources": ["catalog", "meta"],
   "types": ["series"],
   "catalogs": [
