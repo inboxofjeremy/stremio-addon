@@ -3,9 +3,15 @@
   "version": "1.0.0",
   "name": "Recent Shows (TVmaze)",
   "description": "Shows aired in the last 7 days excluding Talk Shows/News",
-  "resources": ["catalog","meta"],
+  "resources": ["catalog", "meta"],
   "types": ["series"],
-  "catalogs": [{ "type": "series", "id": "recent", "name": "Recent Shows" }],
+  "catalogs": [
+    {
+      "type": "series",
+      "id": "recent",
+      "name": "Recent Shows"
+    }
+  ],
   "idPrefixes": [],
   "endpoint": "https://stremio-addon-three.vercel.app/api"
 }
