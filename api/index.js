@@ -17,12 +17,13 @@ const axiosInstance = axios.create({ timeout: 3000 });
 const formatDate = (d) => d.toISOString().split("T")[0];
 
 let cache = { shows: [], lastFetch: 0 };
-const CACHE_DURATION = 15 * 60 * 1000;
+const CACHE_DURATION = 15 * 60 * 1000; // 15 minutes
 
+// Fetch last 3 days only
 async function fetchCache() {
   const today = new Date();
   const last3Days = new Date();
-  last3Days.setDate(today.getDate() - 2); // only last 3 days
+  last3Days.setDate(today.getDate() - 2);
 
   const dates = [];
   for (let d = new Date(last3Days); d <= today; d.setDate(d.getDate() + 1)) {
@@ -73,7 +74,7 @@ async function fetchCache() {
   console.log("Cache populated with", cache.shows.length, "shows");
 }
 
-// do not await fetch at startup, background only
+// Start cache in background (do not block)
 setTimeout(fetchCache, 0);
 
 // Background updater
@@ -82,9 +83,10 @@ async function updateCache() {
   fetchCache();
 }
 
+// Catalog handler returns cached data immediately
 builder.defineCatalogHandler(async ({ type }) => {
   if (type !== "series") return { metas: [] };
-  updateCache(); // async refresh
+  updateCache(); // refresh in background
   return {
     metas: cache.shows.map(show => ({
       id: show.id,
@@ -96,6 +98,7 @@ builder.defineCatalogHandler(async ({ type }) => {
   };
 });
 
+// Meta handler
 builder.defineMetaHandler(async ({ type, id }) => {
   updateCache();
   const show = cache.shows.find(s => s.id === id);
