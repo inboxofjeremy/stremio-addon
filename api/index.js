@@ -1,13 +1,12 @@
 const { addonBuilder } = require("stremio-addon-sdk");
 const axios = require("axios");
 
-// Proper manifest with catalog object
 const builder = new addonBuilder({
   id: "org.example.recentshows",
   version: "1.0.0",
   name: "Recent Shows",
-  description: "Shows aired in the last 7 days excluding talk shows/news",
-  resources: ["catalog", "meta"],
+  description: "Shows aired in the last 3 days excluding talk shows/news",
+  resources: ["catalog","meta"],
   types: ["series"],
   catalogs: [
     { type: "series", id: "recent", name: "Recent Shows" }
@@ -18,16 +17,15 @@ const axiosInstance = axios.create({ timeout: 3000 });
 const formatDate = (d) => d.toISOString().split("T")[0];
 
 let cache = { shows: [], lastFetch: 0 };
-const CACHE_DURATION = 15 * 60 * 1000; // 15 minutes
+const CACHE_DURATION = 15 * 60 * 1000;
 
-// Function to fetch 7 days from TVmaze and populate cache
 async function fetchCache() {
   const today = new Date();
-  const lastWeek = new Date();
-  lastWeek.setDate(today.getDate() - 7);
+  const last3Days = new Date();
+  last3Days.setDate(today.getDate() - 2); // only last 3 days
 
   const dates = [];
-  for (let d = new Date(lastWeek); d <= today; d.setDate(d.getDate() + 1)) {
+  for (let d = new Date(last3Days); d <= today; d.setDate(d.getDate() + 1)) {
     dates.push(formatDate(d));
   }
 
@@ -75,24 +73,18 @@ async function fetchCache() {
   console.log("Cache populated with", cache.shows.length, "shows");
 }
 
-// Preload cache at startup (non-blocking)
-fetchCache().catch(err => console.error("Initial cache fetch failed:", err.message));
+// do not await fetch at startup, background only
+setTimeout(fetchCache, 0);
 
-// Background cache updater
+// Background updater
 async function updateCache() {
-  const now = Date.now();
-  if (now - cache.lastFetch < CACHE_DURATION) return;
+  if (Date.now() - cache.lastFetch < CACHE_DURATION) return;
   fetchCache();
 }
 
-// Catalog handler: return cached data immediately
 builder.defineCatalogHandler(async ({ type }) => {
   if (type !== "series") return { metas: [] };
-
-  // Trigger async cache update
-  updateCache();
-
-  // Return cached shows immediately
+  updateCache(); // async refresh
   return {
     metas: cache.shows.map(show => ({
       id: show.id,
@@ -104,12 +96,10 @@ builder.defineCatalogHandler(async ({ type }) => {
   };
 });
 
-// Meta handler: return cached episodes
 builder.defineMetaHandler(async ({ type, id }) => {
   updateCache();
   const show = cache.shows.find(s => s.id === id);
   return { id, type, episodes: show ? show.episodes : [] };
 });
 
-// Vercel export
-module.exports = (req, res) => builder.getInterface(req, res);
+module.exports = (req,res) => builder.getInterface(req,res);
