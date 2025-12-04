@@ -8,7 +8,7 @@ const builder = new addonBuilder({
   description: "Shows aired in the last 7 days excluding talk shows and news",
   resources: ["catalog", "meta"],
   types: ["series"],
-  catalogs: [] // Required for manifest validation
+  catalogs: [] // Required
 });
 
 const formatDate = (d) => d.toISOString().split("T")[0];
@@ -89,5 +89,5 @@ builder.defineMetaHandler(async ({ type, id }) => {
   return { id, type, episodes: show ? show.episodes : [] };
 });
 
-// ✅ Export the builder directly — Vercel handles HTTP interface
-module.exports = builder;
+// ✅ Vercel-compatible export
+module.exports = (req, res) => builder.getInterface(req, res);
