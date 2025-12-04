@@ -1,3 +1,4 @@
+// api/index.js
 const { addonBuilder } = require("stremio-addon-sdk");
 const axios = require("axios");
 
@@ -14,9 +15,10 @@ const builder = new addonBuilder({
 const axiosInstance = axios.create({ timeout: 5000 });
 const formatDate = d => d.toISOString().split("T")[0];
 
+// Cache with a single test show to respond instantly
 let cache = {
   shows: [
-    { // minimal test show for instant first response
+    {
       id: "test-show",
       name: "Test Show",
       type: "series",
@@ -32,7 +34,7 @@ let cache = {
 
 const CACHE_DURATION = 15*60*1000; // 15 minutes
 
-// Parallel fetch last 7 days
+// Background fetch from TVmaze (does not block first response)
 async function fetchCache() {
   try {
     const today = new Date();
@@ -42,9 +44,11 @@ async function fetchCache() {
     const dates = [];
     for (let d = new Date(last7Days); d <= today; d.setDate(d.getDate()+1)) dates.push(formatDate(new Date(d)));
 
-    // fetch all dates in parallel
-    const fetches = dates.map(date => axiosInstance.get(`https://api.tvmaze.com/schedule?country=US&date=${date}`)
-      .then(res => res.data).catch(()=>[]));
+    const fetches = dates.map(date =>
+      axiosInstance.get(`https://api.tvmaze.com/schedule?country=US&date=${date}`)
+        .then(res => res.data)
+        .catch(()=>[])
+    );
 
     const results = await Promise.all(fetches);
 
@@ -82,26 +86,27 @@ async function fetchCache() {
   }
 }
 
-// Async background fetch
+// Update cache asynchronously
 function updateCache() {
   if(Date.now() - cache.lastFetch > CACHE_DURATION) fetchCache();
 }
 
 // Catalog handler
 builder.defineCatalogHandler(async ({type}) => {
-  updateCache(); // async fetch
-  // return cache immediately
-  return { metas: cache.shows.map(s => ({
-    id:s.id, name:s.name, type:"series", poster:s.poster, description:s.description
-  })) };
+  updateCache(); // async background fetch
+  return {
+    metas: cache.shows.map(s => ({
+      id: s.id, name: s.name, type: "series", poster: s.poster, description: s.description
+    }))
+  };
 });
 
 // Meta handler
 builder.defineMetaHandler(async ({type,id}) => {
   updateCache();
   const show = cache.shows.find(s=>s.id===id);
-  return { id,type,episodes: show ? show.episodes : [] };
+  return { id, type, episodes: show ? show.episodes : [] };
 });
 
-// Vercel serverless export
+// ✅ Default export for Vercel
 module.exports = (req,res) => builder.getInterface(req,res);
