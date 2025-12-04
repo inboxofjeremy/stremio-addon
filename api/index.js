@@ -17,21 +17,10 @@ const formatDate = (d) => d.toISOString().split("T")[0];
 let cache = { shows: [], lastFetch: 0 };
 const CACHE_DURATION = 15 * 60 * 1000; // 15 minutes
 
-async function fetchSchedule(dateStr) {
-  try {
-    const res = await axiosInstance.get(`https://api.tvmaze.com/schedule?country=US&date=${dateStr}`);
-    return res.data || [];
-  } catch (err) {
-    console.error("TVmaze fetch error:", err.message);
-    return [];
-  }
-}
-
-async function getRecentShows() {
+// Async cache update, non-blocking
+async function updateCache() {
   const now = Date.now();
-  if (cache.shows.length && now - cache.lastFetch < CACHE_DURATION) {
-    return cache.shows;
-  }
+  if (now - cache.lastFetch < CACHE_DURATION) return;
 
   const today = new Date();
   const lastWeek = new Date();
@@ -42,59 +31,70 @@ async function getRecentShows() {
     dates.push(formatDate(d));
   }
 
-  // Fetch all days in parallel, but ignore failures
-  const results = await Promise.all(dates.map((date) => fetchSchedule(date).catch(() => [])));
+  try {
+    const results = await Promise.all(dates.map((date) => axiosInstance.get(`https://api.tvmaze.com/schedule?country=US&date=${date}`)
+      .then(res => res.data)
+      .catch(() => [])));
 
-  const showsMap = {};
-  results.flat().forEach((ep) => {
-    const show = ep.show;
-    if (!show) return;
-    if (["Talk Show", "News"].includes(show.type)) return;
+    const showsMap = {};
+    results.flat().forEach((ep) => {
+      const show = ep.show;
+      if (!show) return;
+      if (["Talk Show", "News"].includes(show.type)) return;
 
-    const showId = show.id.toString();
-    if (!showsMap[showId]) {
-      showsMap[showId] = {
-        id: showId,
-        name: show.name,
-        type: "series",
-        poster: show.image?.medium || "",
-        description: show.summary || "",
-        episodes: []
-      };
-    }
+      const showId = show.id.toString();
+      if (!showsMap[showId]) {
+        showsMap[showId] = {
+          id: showId,
+          name: show.name,
+          type: "series",
+          poster: show.image?.medium || "",
+          description: show.summary || "",
+          episodes: []
+        };
+      }
 
-    showsMap[showId].episodes.push({
-      id: ep.id.toString(),
-      name: ep.name,
-      season: ep.season,
-      episode: ep.number,
-      released: ep.airdate,
-      type: "episode",
-      series: showId
+      showsMap[showId].episodes.push({
+        id: ep.id.toString(),
+        name: ep.name,
+        season: ep.season,
+        episode: ep.number,
+        released: ep.airdate,
+        type: "episode",
+        series: showId
+      });
     });
-  });
 
-  cache.shows = Object.values(showsMap);
-  cache.lastFetch = now;
-
-  return cache.shows;
+    cache.shows = Object.values(showsMap);
+    cache.lastFetch = now;
+  } catch (err) {
+    console.error("Cache update error:", err.message);
+  }
 }
 
-// Return cached results immediately to avoid hanging
+// Catalog handler: return cache immediately, update async if expired
 builder.defineCatalogHandler(async ({ type }) => {
   if (type !== "series") return { metas: [] };
-  const shows = await getRecentShows().catch(() => []); // safe fallback
-  return { metas: shows.map((show) => ({
-    id: show.id,
-    name: show.name,
-    type: "series",
-    poster: show.poster,
-    description: show.description
-  }))};
+
+  // Trigger background cache update
+  updateCache();
+
+  // Return whatever is in cache (may be empty on first request)
+  return {
+    metas: cache.shows.map(show => ({
+      id: show.id,
+      name: show.name,
+      type: "series",
+      poster: show.poster,
+      description: show.description
+    }))
+  };
 });
 
+// Meta handler
 builder.defineMetaHandler(async ({ type, id }) => {
-  const show = (await getRecentShows().catch(() => [])).find((s) => s.id === id);
+  updateCache();
+  const show = cache.shows.find(s => s.id === id);
   return { id, type, episodes: show ? show.episodes : [] };
 });
 
