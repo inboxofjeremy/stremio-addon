@@ -26,6 +26,7 @@ const cache = {
   ]
 };
 
+// Catalog handler
 builder.defineCatalogHandler(() => ({
   metas: cache.shows.map(s => ({
     id: s.id,
@@ -36,9 +37,11 @@ builder.defineCatalogHandler(() => ({
   }))
 }));
 
+// Meta handler
 builder.defineMetaHandler(({id}) => {
   const show = cache.shows.find(s => s.id === id);
   return { id, type: "series", episodes: show ? show.episodes : [] };
-}));
+});
 
+// Default export for Vercel
 module.exports = (req,res) => builder.getInterface(req,res);
