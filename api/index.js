@@ -10,79 +10,87 @@ const builder = new addonBuilder({
   types: ["series"],
 });
 
-// Helper to get date strings
-function formatDate(date) {
-  return date.toISOString().split("T")[0];
+// Helper: YYYY-MM-DD
+const formatDate = d => d.toISOString().split("T")[0];
+
+// Fetch schedule safely
+async function fetchSchedule(dateStr) {
+  try {
+    const res = await axios.get(`https://api.tvmaze.com/schedule?country=US&date=${dateStr}`);
+    return res.data;
+  } catch (err) {
+    console.error("Error fetching TVmaze:", err.message);
+    return [];
+  }
 }
 
-// Get episodes from last 7 days
-async function getRecentEpisodes() {
+// Get shows and episodes from last 7 days
+async function getRecentShows() {
   const today = new Date();
-  const lastWeek = new Date(today);
+  const lastWeek = new Date();
   lastWeek.setDate(today.getDate() - 7);
 
-  const showsMap = {}; // id -> show + episodes
-
+  const dates = [];
   for (let d = new Date(lastWeek); d <= today; d.setDate(d.getDate() + 1)) {
-    const dateStr = formatDate(d);
-    const response = await axios.get(`https://api.tvmaze.com/schedule?country=US&date=${dateStr}`);
-    response.data.forEach(ep => {
-      const show = ep.show;
-      // Skip Talk Shows and News
-      if (["Talk Show", "News"].includes(show.type)) return;
-
-      if (!showsMap[show.id]) {
-        showsMap[show.id] = {
-          id: show.id.toString(),
-          name: show.name,
-          type: "series",
-          poster: show.image?.medium,
-          description: show.summary || "",
-          episodes: [],
-        };
-      }
-
-      // Add episode
-      showsMap[show.id].episodes.push({
-        id: ep.id.toString(),
-        name: ep.name,
-        season: ep.season,
-        episode: ep.number,
-        released: ep.airdate,
-        type: "episode",
-        series: show.id.toString(),
-      });
-    });
+    dates.push(formatDate(d));
   }
+
+  // Fetch all dates in parallel
+  const results = await Promise.all(dates.map(fetchSchedule));
+  const showsMap = {};
+
+  results.flat().forEach(ep => {
+    const show = ep.show;
+    if (!show) return;
+    if (["Talk Show", "News"].includes(show.type)) return;
+
+    const showId = show.id.toString();
+    if (!showsMap[showId]) {
+      showsMap[showId] = {
+        id: showId,
+        name: show.name,
+        type: "series",
+        poster: show.image?.medium || "",
+        description: show.summary || "",
+        episodes: [],
+      };
+    }
+
+    // Add episode
+    showsMap[showId].episodes.push({
+      id: ep.id.toString(),
+      name: ep.name,
+      season: ep.season,
+      episode: ep.number,
+      released: ep.airdate,
+      type: "episode",
+      series: showId,
+    });
+  });
 
   return Object.values(showsMap);
 }
 
 // CATALOG
-builder.defineCatalogHandler(async ({ type, id }) => {
+builder.defineCatalogHandler(async ({ type }) => {
   if (type !== "series") return { metas: [] };
-
-  const shows = await getRecentEpisodes();
-
-  // Only send show meta (without episodes)
-  const metas = shows.map(show => ({
-    id: show.id,
-    name: show.name,
-    type: "series",
-    poster: show.poster,
-    description: show.description,
-  }));
-
-  return { metas };
+  const shows = await getRecentShows();
+  return {
+    metas: shows.map(show => ({
+      id: show.id,
+      name: show.name,
+      type: "series",
+      poster: show.poster,
+      description: show.description,
+    })),
+  };
 });
 
-// META (return episodes for a specific show)
+// META
 builder.defineMetaHandler(async ({ type, id }) => {
-  const shows = await getRecentEpisodes();
+  const shows = await getRecentShows();
   const show = shows.find(s => s.id === id);
-  if (!show) return { id, type, episodes: [] };
-
-  return { id, type, episodes: show.episodes };
+  return { id, type, episodes: show ? show.episodes : [] };
 });
 
 export default getInterface(builder);
