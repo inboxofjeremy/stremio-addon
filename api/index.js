@@ -15,18 +15,16 @@ const builder = new addonBuilder({
 const axiosInstance = axios.create({ timeout: 5000 });
 const formatDate = d => d.toISOString().split("T")[0];
 
-// Preload cache with a single test show
+// Preloaded cache: single placeholder show for instant response
 let cache = {
   shows: [
     {
-      id: "test-show",
-      name: "Test Show",
+      id: "placeholder-show",
+      name: "Loading Shows...",
       type: "series",
       poster: "https://static.tvmaze.com/uploads/images/medium_portrait/1/1.jpg",
-      description: "This is a test show",
-      episodes: [
-        { id: "test-ep1", name: "Test Episode 1", season: 1, episode: 1, released: "2025-12-01", type: "episode", series: "test-show" }
-      ]
+      description: "Fetching recent shows from TVmaze...",
+      episodes: []
     }
   ],
   lastFetch: 0
@@ -34,23 +32,24 @@ let cache = {
 
 const CACHE_DURATION = 15*60*1000; // 15 minutes
 
-// Fetch last 7 days of TVmaze shows in the background
-async function fetchCache() {
+// Background fetch TVmaze (non-blocking)
+async function fetchTVMazeCache() {
   try {
     const today = new Date();
     const last7Days = new Date();
     last7Days.setDate(today.getDate() - 6);
 
     const dates = [];
-    for (let d = new Date(last7Days); d <= today; d.setDate(d.getDate()+1)) dates.push(formatDate(new Date(d)));
+    for (let d = new Date(last7Days); d <= today; d.setDate(d.getDate()+1)) {
+      dates.push(formatDate(new Date(d)));
+    }
 
-    const fetches = dates.map(date =>
+    // Fetch all dates in parallel
+    const results = await Promise.all(dates.map(date =>
       axiosInstance.get(`https://api.tvmaze.com/schedule?country=US&date=${date}`)
         .then(res => res.data)
-        .catch(()=>[])
-    );
-
-    const results = await Promise.all(fetches);
+        .catch(() => [])
+    ));
 
     const showsMap = {};
     results.flat().forEach(ep => {
@@ -58,55 +57,61 @@ async function fetchCache() {
       if (!show || ["Talk Show","News"].includes(show.type)) return;
       const showId = show.id.toString();
       if (!showsMap[showId]) {
-        showsMap[showId] = { 
+        showsMap[showId] = {
           id: showId,
           name: show.name,
-          type:"series",
-          poster: show.image?.medium||"",
-          description: show.summary||"",
-          episodes: [] 
+          type: "series",
+          poster: show.image?.medium || "",
+          description: show.summary || "",
+          episodes: []
         };
       }
-      showsMap[showId].episodes.push({ 
+      showsMap[showId].episodes.push({
         id: ep.id.toString(),
         name: ep.name,
         season: ep.season,
         episode: ep.number,
         released: ep.airdate,
         type: "episode",
-        series: showId 
+        series: showId
       });
     });
 
     cache.shows = Object.values(showsMap);
     cache.lastFetch = Date.now();
     console.log("Cache updated:", cache.shows.length, "shows");
-  } catch(err) {
-    console.error("TVmaze fetch error:", err.message);
+  } catch (err) {
+    console.error("TVmaze fetch failed:", err.message);
   }
 }
 
-// Update cache asynchronously
+// Trigger background fetch if cache is stale
 function updateCache() {
-  if(Date.now() - cache.lastFetch > CACHE_DURATION) fetchCache();
+  if (Date.now() - cache.lastFetch > CACHE_DURATION) {
+    fetchTVMazeCache(); // do NOT await
+  }
 }
 
-// Catalog handler
-builder.defineCatalogHandler(async ({type}) => {
-  updateCache(); // async background fetch
+// Catalog handler: return immediately
+builder.defineCatalogHandler(() => {
+  updateCache();
   return {
     metas: cache.shows.map(s => ({
-      id: s.id, name: s.name, type: "series", poster: s.poster, description: s.description
+      id: s.id,
+      name: s.name,
+      type: "series",
+      poster: s.poster,
+      description: s.description
     }))
   };
 });
 
-// Meta handler
-builder.defineMetaHandler(async ({type,id}) => {
+// Meta handler: return immediately
+builder.defineMetaHandler(({ id }) => {
   updateCache();
-  const show = cache.shows.find(s=>s.id===id);
-  return { id, type, episodes: show ? show.episodes : [] };
+  const show = cache.shows.find(s => s.id === id);
+  return { id, type: "series", episodes: show ? show.episodes : [] };
 });
 
 // Default export for Vercel
-module.exports = (req,res) => builder.getInterface(req,res);
+module.exports = (req, res) => builder.getInterface(req, res);
