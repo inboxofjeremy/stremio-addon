@@ -8,7 +8,7 @@ const builder = new addonBuilder({
   description: "Shows aired in the last 7 days excluding talk shows and news",
   resources: ["catalog", "meta"],
   types: ["series"],
-  catalogs: [] // Required for Stremio manifest
+  catalogs: [] // Required for manifest validation
 });
 
 const formatDate = (d) => d.toISOString().split("T")[0];
@@ -67,6 +67,7 @@ async function getRecentShows() {
   return Object.values(showsMap);
 }
 
+// Catalog handler
 builder.defineCatalogHandler(async ({ type }) => {
   if (type !== "series") return { metas: [] };
   const shows = await getRecentShows();
@@ -81,11 +82,12 @@ builder.defineCatalogHandler(async ({ type }) => {
   };
 });
 
+// Meta handler
 builder.defineMetaHandler(async ({ type, id }) => {
   const shows = await getRecentShows();
   const show = shows.find((s) => s.id === id);
   return { id, type, episodes: show ? show.episodes : [] };
 });
 
-// Correct CommonJS export for Vercel
-module.exports = builder.getInterface();
+// ✅ Export the builder directly — Vercel handles HTTP interface
+module.exports = builder;
