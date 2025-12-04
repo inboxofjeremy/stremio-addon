@@ -1,8 +1,8 @@
 {
   "id": "org.example.recentshows",
   "version": "1.0.0",
-  "name": "Recent Shows",
-  "description": "Shows aired in the last 3 days excluding talk shows/news",
+  "name": "Recent Shows (Test)",
+  "description": "Test addon with one show, guaranteed to load on Vercel Free Plan",
   "resources": ["catalog", "meta"],
   "types": ["series"],
   "catalogs": [
