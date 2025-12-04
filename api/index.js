@@ -10,16 +10,16 @@ const builder = new addonBuilder({
   types: ["series"],
 });
 
-// Helper: YYYY-MM-DD
-const formatDate = d => d.toISOString().split("T")[0];
+// Helper: format date YYYY-MM-DD
+const formatDate = (d) => d.toISOString().split("T")[0];
 
-// Fetch schedule safely
+// Fetch schedule for a single date
 async function fetchSchedule(dateStr) {
   try {
     const res = await axios.get(`https://api.tvmaze.com/schedule?country=US&date=${dateStr}`);
     return res.data;
   } catch (err) {
-    console.error("Error fetching TVmaze:", err.message);
+    console.error("Error fetching TVmaze schedule:", err.message);
     return [];
   }
 }
@@ -39,7 +39,7 @@ async function getRecentShows() {
   const results = await Promise.all(dates.map(fetchSchedule));
   const showsMap = {};
 
-  results.flat().forEach(ep => {
+  results.flat().forEach((ep) => {
     const show = ep.show;
     if (!show) return;
     if (["Talk Show", "News"].includes(show.type)) return;
@@ -76,7 +76,7 @@ builder.defineCatalogHandler(async ({ type }) => {
   if (type !== "series") return { metas: [] };
   const shows = await getRecentShows();
   return {
-    metas: shows.map(show => ({
+    metas: shows.map((show) => ({
       id: show.id,
       name: show.name,
       type: "series",
@@ -89,7 +89,7 @@ builder.defineCatalogHandler(async ({ type }) => {
 // META
 builder.defineMetaHandler(async ({ type, id }) => {
   const shows = await getRecentShows();
-  const show = shows.find(s => s.id === id);
+  const show = shows.find((s) => s.id === id);
   return { id, type, episodes: show ? show.episodes : [] };
 });
 
