@@ -8,10 +8,17 @@ const builder = new addonBuilder({
   description: "Shows aired in the last 7 days excluding talk shows and news",
   resources: ["catalog", "meta"],
   types: ["series"],
-  catalogs: [] // Required
+  catalogs: []
 });
 
-const formatDate = (d) => d.toISOString().split("T")[0];
+const formatDate = (d) => d.toISOString().split("T")[0");
+
+let cache = {
+  shows: null,
+  lastFetch: 0
+};
+
+const CACHE_DURATION = 15 * 60 * 1000; // 15 minutes
 
 async function fetchSchedule(dateStr) {
   try {
@@ -24,6 +31,13 @@ async function fetchSchedule(dateStr) {
 }
 
 async function getRecentShows() {
+  const now = Date.now();
+
+  // Return cached shows if valid
+  if (cache.shows && now - cache.lastFetch < CACHE_DURATION) {
+    return cache.shows;
+  }
+
   const today = new Date();
   const lastWeek = new Date();
   lastWeek.setDate(today.getDate() - 7);
@@ -33,7 +47,9 @@ async function getRecentShows() {
     dates.push(formatDate(d));
   }
 
+  // Fetch all dates in parallel
   const results = await Promise.all(dates.map(fetchSchedule));
+
   const showsMap = {};
 
   results.flat().forEach((ep) => {
@@ -64,7 +80,10 @@ async function getRecentShows() {
     });
   });
 
-  return Object.values(showsMap);
+  cache.shows = Object.values(showsMap);
+  cache.lastFetch = now;
+
+  return cache.shows;
 }
 
 // Catalog handler
@@ -89,5 +108,5 @@ builder.defineMetaHandler(async ({ type, id }) => {
   return { id, type, episodes: show ? show.episodes : [] };
 });
 
-// ✅ Vercel-compatible export
+// Vercel export
 module.exports = (req, res) => builder.getInterface(req, res);
