@@ -18,7 +18,7 @@ let cache = {
   lastFetch: 0
 };
 
-const CACHE_DURATION = 15 * 60 * 1000; // 15 minutes
+const CACHE_DURATION = 10 * 60 * 1000; // 10 minutes
 
 async function fetchSchedule(dateStr) {
   try {
@@ -33,7 +33,6 @@ async function fetchSchedule(dateStr) {
 async function getRecentShows() {
   const now = Date.now();
 
-  // Return cached shows if valid
   if (cache.shows && now - cache.lastFetch < CACHE_DURATION) {
     return cache.shows;
   }
@@ -47,7 +46,7 @@ async function getRecentShows() {
     dates.push(formatDate(d));
   }
 
-  // Fetch all dates in parallel
+  // Fetch all days in parallel
   const results = await Promise.all(dates.map(fetchSchedule));
 
   const showsMap = {};
@@ -86,27 +85,20 @@ async function getRecentShows() {
   return cache.shows;
 }
 
-// Catalog handler
 builder.defineCatalogHandler(async ({ type }) => {
   if (type !== "series") return { metas: [] };
-  const shows = await getRecentShows();
-  return {
-    metas: shows.map((show) => ({
-      id: show.id,
-      name: show.name,
-      type: "series",
-      poster: show.poster,
-      description: show.description
-    }))
-  };
+  return { metas: (await getRecentShows()).map((show) => ({
+    id: show.id,
+    name: show.name,
+    type: "series",
+    poster: show.poster,
+    description: show.description
+  }))};
 });
 
-// Meta handler
 builder.defineMetaHandler(async ({ type, id }) => {
-  const shows = await getRecentShows();
-  const show = shows.find((s) => s.id === id);
+  const show = (await getRecentShows()).find((s) => s.id === id);
   return { id, type, episodes: show ? show.episodes : [] };
 });
 
-// Vercel export
 module.exports = (req, res) => builder.getInterface(req, res);
