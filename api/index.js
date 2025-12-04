@@ -11,17 +11,14 @@ const builder = new addonBuilder({
   catalogs: []
 });
 
-const axiosInstance = axios.create({ timeout: 5000 }); // 5s per request
+const axiosInstance = axios.create({ timeout: 5000 });
 const formatDate = (d) => d.toISOString().split("T")[0];
 
 let cache = { shows: [], lastFetch: 0 };
 const CACHE_DURATION = 15 * 60 * 1000; // 15 minutes
 
-// Async cache update, non-blocking
-async function updateCache() {
-  const now = Date.now();
-  if (now - cache.lastFetch < CACHE_DURATION) return;
-
+// Preload cache at startup
+async function preloadCache() {
   const today = new Date();
   const lastWeek = new Date();
   lastWeek.setDate(today.getDate() - 7);
@@ -32,12 +29,17 @@ async function updateCache() {
   }
 
   try {
-    const results = await Promise.all(dates.map((date) => axiosInstance.get(`https://api.tvmaze.com/schedule?country=US&date=${date}`)
-      .then(res => res.data)
-      .catch(() => [])));
+    const results = await Promise.all(
+      dates.map(date =>
+        axiosInstance
+          .get(`https://api.tvmaze.com/schedule?country=US&date=${date}`)
+          .then(res => res.data || [])
+          .catch(() => [])
+      )
+    );
 
     const showsMap = {};
-    results.flat().forEach((ep) => {
+    results.flat().forEach(ep => {
       const show = ep.show;
       if (!show) return;
       if (["Talk Show", "News"].includes(show.type)) return;
@@ -66,20 +68,28 @@ async function updateCache() {
     });
 
     cache.shows = Object.values(showsMap);
-    cache.lastFetch = now;
+    cache.lastFetch = Date.now();
+    console.log("Preloaded cache with", cache.shows.length, "shows");
   } catch (err) {
-    console.error("Cache update error:", err.message);
+    console.error("Preload cache failed:", err.message);
   }
 }
 
-// Catalog handler: return cache immediately, update async if expired
+// Kick off preload immediately
+preloadCache();
+
+// Background update to refresh cache every request
+async function updateCache() {
+  const now = Date.now();
+  if (now - cache.lastFetch < CACHE_DURATION) return;
+
+  preloadCache(); // re-use preload logic
+}
+
+// Catalog handler
 builder.defineCatalogHandler(async ({ type }) => {
   if (type !== "series") return { metas: [] };
-
-  // Trigger background cache update
-  updateCache();
-
-  // Return whatever is in cache (may be empty on first request)
+  updateCache(); // refresh in background
   return {
     metas: cache.shows.map(show => ({
       id: show.id,
@@ -98,4 +108,5 @@ builder.defineMetaHandler(async ({ type, id }) => {
   return { id, type, episodes: show ? show.episodes : [] };
 });
 
+// Vercel export
 module.exports = (req, res) => builder.getInterface(req, res);
