@@ -1,16 +1,10 @@
 {
   "name": "stremio-addon",
   "version": "1.0.0",
-  "description": "Dynamic Stremio addon using TVmaze last 7 days",
   "main": "api/index.js",
-  "scripts": {
-    "start": "vercel dev"
-  },
+  "scripts": { "start": "vercel dev" },
   "dependencies": {
-    "axios": "^1.6.0",
     "stremio-addon-sdk": "^1.3.1"
   },
-  "engines": {
-    "node": "24.x"
-  }
+  "engines": { "node": "24.x" }
 }
