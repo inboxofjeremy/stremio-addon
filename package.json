@@ -1,7 +1,7 @@
 {
   "name": "stremio-addon",
   "version": "1.0.0",
-  "description": "Stremio addon for shows aired in the last 7 days excluding talk shows and news",
+  "description": "Recent shows addon for Stremio (last 7 days, no talk shows/news)",
   "main": "api/index.js",
   "scripts": {
     "start": "vercel dev"
