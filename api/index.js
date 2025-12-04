@@ -11,19 +11,16 @@ const builder = new addonBuilder({
   catalogs: []
 });
 
+const axiosInstance = axios.create({ timeout: 5000 }); // 5s per request
 const formatDate = (d) => d.toISOString().split("T")[0];
 
-let cache = {
-  shows: null,
-  lastFetch: 0
-};
-
-const CACHE_DURATION = 10 * 60 * 1000; // 10 minutes
+let cache = { shows: [], lastFetch: 0 };
+const CACHE_DURATION = 15 * 60 * 1000; // 15 minutes
 
 async function fetchSchedule(dateStr) {
   try {
-    const res = await axios.get(`https://api.tvmaze.com/schedule?country=US&date=${dateStr}`);
-    return res.data;
+    const res = await axiosInstance.get(`https://api.tvmaze.com/schedule?country=US&date=${dateStr}`);
+    return res.data || [];
   } catch (err) {
     console.error("TVmaze fetch error:", err.message);
     return [];
@@ -32,8 +29,7 @@ async function fetchSchedule(dateStr) {
 
 async function getRecentShows() {
   const now = Date.now();
-
-  if (cache.shows && now - cache.lastFetch < CACHE_DURATION) {
+  if (cache.shows.length && now - cache.lastFetch < CACHE_DURATION) {
     return cache.shows;
   }
 
@@ -46,11 +42,10 @@ async function getRecentShows() {
     dates.push(formatDate(d));
   }
 
-  // Fetch all days in parallel
-  const results = await Promise.all(dates.map(fetchSchedule));
+  // Fetch all days in parallel, but ignore failures
+  const results = await Promise.all(dates.map((date) => fetchSchedule(date).catch(() => [])));
 
   const showsMap = {};
-
   results.flat().forEach((ep) => {
     const show = ep.show;
     if (!show) return;
@@ -85,9 +80,11 @@ async function getRecentShows() {
   return cache.shows;
 }
 
+// Return cached results immediately to avoid hanging
 builder.defineCatalogHandler(async ({ type }) => {
   if (type !== "series") return { metas: [] };
-  return { metas: (await getRecentShows()).map((show) => ({
+  const shows = await getRecentShows().catch(() => []); // safe fallback
+  return { metas: shows.map((show) => ({
     id: show.id,
     name: show.name,
     type: "series",
@@ -97,7 +94,7 @@ builder.defineCatalogHandler(async ({ type }) => {
 });
 
 builder.defineMetaHandler(async ({ type, id }) => {
-  const show = (await getRecentShows()).find((s) => s.id === id);
+  const show = (await getRecentShows().catch(() => [])).find((s) => s.id === id);
   return { id, type, episodes: show ? show.episodes : [] };
 });
 
