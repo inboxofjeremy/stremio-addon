@@ -1,121 +1,47 @@
 const { addonBuilder } = require("stremio-addon-sdk");
-const axios = require("axios");
 
-// Builder with proper catalog object
 const builder = new addonBuilder({
   id: "org.example.recentshows",
   version: "1.0.0",
   name: "Recent Shows",
   description: "Shows aired in the last 7 days excluding talk shows/news",
-  resources: ["catalog", "meta"],
+  resources: ["catalog","meta"],
   types: ["series"],
   catalogs: [
-    {
-      type: "series",
-      id: "recent",
-      name: "Recent Shows"
-    }
+    { type: "series", id: "recent", name: "Recent Shows" }
   ]
 });
 
-const axiosInstance = axios.create({ timeout: 3000 });
-const formatDate = (d) => d.toISOString().split("T")[0];
-
-let cache = { shows: [], lastFetch: 0 };
-const CACHE_DURATION = 15 * 60 * 1000; // 15 minutes
-
-// Preload cache function
-async function preloadCache() {
-  const today = new Date();
-  const lastWeek = new Date();
-  lastWeek.setDate(today.getDate() - 7);
-
-  const dates = [];
-  for (let d = new Date(lastWeek); d <= today; d.setDate(d.getDate() + 1)) {
-    dates.push(formatDate(d));
-  }
-
-  try {
-    const results = [];
-    for (let date of dates) {
-      try {
-        const res = await axiosInstance.get(`https://api.tvmaze.com/schedule?country=US&date=${date}`);
-        results.push(res.data || []);
-      } catch {
-        results.push([]);
-      }
-    }
-
-    const showsMap = {};
-    results.flat().forEach(ep => {
-      const show = ep.show;
-      if (!show) return;
-      if (["Talk Show", "News"].includes(show.type)) return;
-
-      const showId = show.id.toString();
-      if (!showsMap[showId]) {
-        showsMap[showId] = {
-          id: showId,
-          name: show.name,
-          type: "series",
-          poster: show.image?.medium || "",
-          description: show.summary || "",
-          episodes: []
-        };
-      }
-
-      showsMap[showId].episodes.push({
-        id: ep.id.toString(),
-        name: ep.name,
-        season: ep.season,
-        episode: ep.number,
-        released: ep.airdate,
-        type: "episode",
-        series: showId
-      });
-    });
-
-    cache.shows = Object.values(showsMap);
-    cache.lastFetch = Date.now();
-    console.log("Preloaded cache with", cache.shows.length, "shows");
-  } catch (err) {
-    console.error("Cache preload failed:", err.message);
-  }
-}
-
-// Start preload on startup
-preloadCache();
-
-// Background async cache updater
-async function updateCache() {
-  const now = Date.now();
-  if (now - cache.lastFetch < CACHE_DURATION) return;
-  preloadCache(); // reuse same logic
-}
-
-// Catalog handler: return cached data immediately
 builder.defineCatalogHandler(async ({ type }) => {
-  if (type !== "series") return { metas: [] };
-
-  updateCache(); // refresh asynchronously
-
   return {
-    metas: cache.shows.map(show => ({
-      id: show.id,
-      name: show.name,
-      type: "series",
-      poster: show.poster,
-      description: show.description
-    }))
+    metas: [
+      {
+        id: "1",
+        name: "Test Show",
+        type: "series",
+        poster: "https://static.tvmaze.com/uploads/images/medium_portrait/1/1.jpg",
+        description: "This is a test show"
+      }
+    ]
   };
 });
 
-// Meta handler: return cached episodes
 builder.defineMetaHandler(async ({ type, id }) => {
-  updateCache();
-  const show = cache.shows.find(s => s.id === id);
-  return { id, type, episodes: show ? show.episodes : [] };
+  return {
+    id,
+    type,
+    episodes: [
+      {
+        id: "101",
+        name: "Test Episode 1",
+        season: 1,
+        episode: 1,
+        released: "2025-12-01",
+        type: "episode",
+        series: id
+      }
+    ]
+  };
 });
 
-// Vercel export
-module.exports = (req, res) => builder.getInterface(req, res);
+module.exports = (req,res) => builder.getInterface(req,res);
