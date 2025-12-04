@@ -2,8 +2,8 @@
   "id": "org.example.recentshows",
   "version": "1.0.0",
   "name": "Recent Shows (Test)",
-  "description": "Test addon with one show, guaranteed to load on Vercel Free Plan",
-  "resources": ["catalog", "meta"],
+  "description": "Test addon with one show",
+  "resources": ["catalog","meta"],
   "types": ["series"],
   "catalogs": [
     { "type": "series", "id": "recent", "name": "Recent Shows" }
@@ -11,3 +11,4 @@
   "idPrefixes": [],
   "endpoint": "https://stremio-addon-three.vercel.app/api"
 }
+
