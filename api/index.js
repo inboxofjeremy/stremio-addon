@@ -1,5 +1,5 @@
 module.exports = async (req, res) => {
-  // ───── CORS / Preflight ─────
+  // ───── CORS + OPTIONS ─────
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "*");
@@ -19,11 +19,12 @@ module.exports = async (req, res) => {
         return d.toISOString().split("T")[0];
       });
 
-      // fetch all 7 days in parallel
+      // fetch 7 days in parallel
       const resultsArr = await Promise.all(
         days.map(day =>
           fetch(`https://api.tvmaze.com/schedule?country=US&date=${day}`)
             .then(r => r.ok ? r.json() : [])
+            .catch(() => [])
         )
       );
 
@@ -39,7 +40,7 @@ module.exports = async (req, res) => {
           uniq.set(id, {
             id,
             type: "series",
-            name: item.show.name,
+            name: item.show.name || "Untitled",
             poster: item.show.image?.medium || null,
             description: (item.show.summary || "").replace(/<[^>]*>/g, "")
           });
@@ -55,8 +56,7 @@ module.exports = async (req, res) => {
       const tvmazeId = fullId.split(":")[1];
 
       const showRes = await fetch(`https://api.tvmaze.com/shows/${tvmazeId}`);
-      if (!showRes.ok) return res.status(404).json({});
-      const show = await showRes.json();
+      const show = showRes.ok ? await showRes.json() : null;
 
       const epsRes = await fetch(`https://api.tvmaze.com/shows/${tvmazeId}/episodes`);
       const epsRaw = epsRes.ok ? await epsRes.json() : [];
@@ -65,7 +65,7 @@ module.exports = async (req, res) => {
         id: `tvmaze:${tvmazeId}:s${ep.season}e${ep.number}`,
         type: "episode",
         series: fullId,
-        name: ep.name,
+        name: ep.name || `S${ep.season}E${ep.number}`,
         season: ep.season,
         episode: ep.number,
         released: ep.airdate || null
@@ -75,15 +75,15 @@ module.exports = async (req, res) => {
         meta: {
           id: fullId,
           type: "series",
-          name: show.name,
-          poster: show.image?.original || show.image?.medium || null,
-          description: (show.summary || "").replace(/<[^>]*>/g, ""),
-          episodes
+          name: show?.name || "Untitled Show",
+          poster: show?.image?.original || show?.image?.medium || null,
+          description: (show?.summary || "").replace(/<[^>]*>/g, ""),
+          episodes: episodes || []
         }
       });
     }
 
-    // default
+    // default fallback
     res.status(200).json({ status: "ok" });
 
   } catch (err) {
