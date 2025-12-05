@@ -1,16 +1,16 @@
 module.exports = async (req, res) => {
-  // CORS
+  // ───── CORS / Preflight ─────
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "*");
-  if (req.method === "OPTIONS") return res.status(200).end();
-
   res.setHeader("Content-Type", "application/json");
+
+  if (req.method === "OPTIONS") return res.status(200).end();
 
   try {
     const url = new URL(req.url, `https://${req.headers.host}`);
 
-    // catalog
+    // ───── Catalog ─────
     if (url.searchParams.get("catalog") === "recent") {
       const today = new Date();
       const days = Array.from({ length: 7 }, (_, i) => {
@@ -49,7 +49,7 @@ module.exports = async (req, res) => {
       return res.status(200).json({ metas: [...uniq.values()] });
     }
 
-    // meta
+    // ───── Meta ─────
     if (url.searchParams.has("meta")) {
       const fullId = url.searchParams.get("meta");
       const tvmazeId = fullId.split(":")[1];
@@ -83,7 +83,9 @@ module.exports = async (req, res) => {
       });
     }
 
+    // default
     res.status(200).json({ status: "ok" });
+
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.toString() });
