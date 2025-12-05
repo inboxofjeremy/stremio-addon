@@ -16,7 +16,7 @@ export default async function handler(req) {
   const id = url.searchParams.get("id");
 
   // ------------------------------
-  // 1️⃣ Catalog endpoint
+  // Catalog endpoint
   // ------------------------------
   if (catalog === "recent" && type === "series") {
     try {
@@ -55,7 +55,7 @@ export default async function handler(req) {
   }
 
   // ------------------------------
-  // 2️⃣ Meta endpoint
+  // Meta endpoint
   // ------------------------------
   if (id && id.startsWith("tvmaze:") && type === "series") {
     const showId = id.split(":")[1];
@@ -94,8 +94,6 @@ export default async function handler(req) {
     }
   }
 
-  // ------------------------------
   // Default fallback
-  // ------------------------------
   return new Response(JSON.stringify({ status: "ok" }), { headers: HEADERS });
 }
