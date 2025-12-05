@@ -7,6 +7,28 @@ const HEADERS = {
   "Access-Control-Allow-Headers": "*"
 };
 
+async function fetchEpisodesBatch(showIds, batchSize = 10) {
+  const batches = [];
+  for (let i = 0; i < showIds.length; i += batchSize) {
+    batches.push(showIds.slice(i, i + batchSize));
+  }
+
+  const allEpisodes = {};
+  for (const batch of batches) {
+    const promises = batch.map(async (show) => {
+      try {
+        const resp = await fetch(`https://api.tvmaze.com/shows/${show.id}/episodes`);
+        const eps = resp.ok ? await resp.json() : [];
+        allEpisodes[show.id] = eps;
+      } catch (err) {
+        allEpisodes[show.id] = [];
+      }
+    });
+    await Promise.all(promises);
+  }
+  return allEpisodes;
+}
+
 export default async function handler(req) {
   if (req.method === "OPTIONS") return new Response(null, { headers: HEADERS, status: 200 });
 
@@ -15,7 +37,7 @@ export default async function handler(req) {
   const type = url.searchParams.get("type");
   const id = url.searchParams.get("id");
 
-  const PST_OFFSET = -8; // PST is UTC-8
+  const PST_OFFSET = -8; // PST UTC-8
   const now = new Date();
 
   // ------------------------------
@@ -24,30 +46,25 @@ export default async function handler(req) {
   if (catalog === "recent" && type === "series") {
     try {
       let allShows = [];
-      let page = 0;
-      let more = true;
+      const MAX_PAGES = 3; // limit pages to avoid timeout
 
-      while (more) {
+      for (let page = 0; page < MAX_PAGES; page++) {
         const resp = await fetch(`https://api.tvmaze.com/shows?page=${page}`);
         const shows = await resp.json();
-        if (!shows || shows.length === 0) {
-          more = false;
-          break;
-        }
+        if (!shows || shows.length === 0) break;
         allShows.push(...shows);
-        page++;
-        if (page > 5) break; // limit to first 6 pages (approx 1500 shows) for performance
       }
+
+      // Fetch episodes in batches
+      const episodesMap = await fetchEpisodesBatch(allShows);
 
       const recentShows = [];
 
       for (const show of allShows) {
-        // Fetch all episodes for the show
-        const epsResp = await fetch(`https://api.tvmaze.com/shows/${show.id}/episodes`);
-        const episodes = epsResp.ok ? await epsResp.json() : [];
+        const eps = episodesMap[show.id] || [];
 
-        // Check if any episode aired in last 7 PST days
-        const hasRecent = episodes.some(ep => {
+        // Filter episodes in last 7 PST days
+        const recentEps = eps.filter(ep => {
           if (!ep.airdate) return false;
           const epDate = new Date(ep.airdate + "T00:00:00Z");
           epDate.setHours(epDate.getHours() + PST_OFFSET);
@@ -55,11 +72,10 @@ export default async function handler(req) {
           return diffDays <= 7 && diffDays >= 0;
         });
 
-        if (!hasRecent) continue;
+        if (recentEps.length === 0) continue;
 
-        // Find latest airdate for sorting
-        const latestAirdate = episodes.reduce((latest, ep) => {
-          if (!ep.airdate) return latest;
+        // Latest episode airdate
+        const latestAirdate = recentEps.reduce((latest, ep) => {
           const epDate = new Date(ep.airdate + "T00:00:00Z");
           epDate.setHours(epDate.getHours() + PST_OFFSET);
           return epDate > latest ? epDate : latest;
@@ -71,14 +87,12 @@ export default async function handler(req) {
           name: show.name,
           poster: show.image?.medium || null,
           description: (show.summary || "").replace(/<[^>]+>/g, ""),
-          latestAirdate,
+          latestAirdate
         });
       }
 
       // Sort descending by latest episode airdate
       const sortedShows = recentShows.sort((a, b) => b.latestAirdate - a.latestAirdate);
-
-      // Remove latestAirdate before returning
       const metas = sortedShows.map(({ latestAirdate, ...rest }) => rest);
 
       return new Response(JSON.stringify({ metas }), { headers: HEADERS });
@@ -89,7 +103,7 @@ export default async function handler(req) {
   }
 
   // ------------------------------
-  // 2️⃣ Meta endpoint: return all episodes for the show
+  // 2️⃣ Meta endpoint
   // ------------------------------
   if (id && id.startsWith("tvmaze:") && type === "series") {
     const showId = id.split(":")[1];
@@ -100,7 +114,6 @@ export default async function handler(req) {
       ]);
 
       if (!showResp.ok) throw new Error("Show not found");
-
       const show = await showResp.json();
       const eps = epsResp.ok ? await epsResp.json() : [];
 
