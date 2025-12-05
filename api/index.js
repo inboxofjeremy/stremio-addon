@@ -1,93 +1,98 @@
-module.exports = async (req, res) => {
-  // ───── CORS + OPTIONS ─────
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "*");
-  res.setHeader("Content-Type", "application/json");
+export const config = { runtime: "edge" };
 
-  if (req.method === "OPTIONS") return res.status(200).end();
+const HEADERS = {
+  "Content-Type": "application/json",
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET,OPTIONS",
+  "Access-Control-Allow-Headers": "*"
+};
 
-  try {
-    const url = new URL(req.url, `https://${req.headers.host}`);
+export default async function handler(req) {
+  if (req.method === "OPTIONS") return new Response(null, { headers: HEADERS, status: 200 });
 
-    // ───── Catalog ─────
-    if (url.searchParams.get("catalog") === "recent") {
+  const url = new URL(req.url);
+  const catalog = url.searchParams.get("catalog");
+  const type = url.searchParams.get("type");
+  const id = url.searchParams.get("id");
+
+  // ------------------------------
+  // Catalog endpoint
+  // ------------------------------
+  if (catalog === "recent" && type === "series") {
+    try {
       const today = new Date();
-      const days = Array.from({ length: 7 }, (_, i) => {
-        const d = new Date(today);
-        d.setDate(today.getDate() - i);
-        return d.toISOString().split("T")[0];
-      });
+      let allShows = [];
 
-      // fetch 7 days in parallel
-      const resultsArr = await Promise.all(
-        days.map(day =>
-          fetch(`https://api.tvmaze.com/schedule?country=US&date=${day}`)
-            .then(r => r.ok ? r.json() : [])
-            .catch(() => [])
-        )
-      );
+      for (let i = 0; i < 7; i++) {
+        const dt = new Date(today);
+        dt.setDate(today.getDate() - i);
+        const dateStr = dt.toISOString().split("T")[0];
 
-      const results = resultsArr.flat();
-      const uniq = new Map();
-
-      for (const item of results) {
-        if (!item.show?.id) continue;
-        if (item.show.type === "Talk Show" || item.show.type === "News") continue;
-
-        const id = `tvmaze:${item.show.id}`;
-        if (!uniq.has(id)) {
-          uniq.set(id, {
-            id,
-            type: "series",
-            name: item.show.name || "Untitled",
-            poster: item.show.image?.medium || null,
-            description: (item.show.summary || "").replace(/<[^>]*>/g, "")
-          });
-        }
+        const resp = await fetch(`https://api.tvmaze.com/schedule?country=US&date=${dateStr}`);
+        const json = await resp.json();
+        allShows = allShows.concat(json);
       }
 
-      return res.status(200).json({ metas: [...uniq.values()] });
-    }
+      const uniqueShows = {};
+      allShows.forEach(e => {
+        if (!e.show) return;
+        if (["Talk Show", "News"].includes(e.show.type)) return;
 
-    // ───── Meta ─────
-    if (url.searchParams.has("meta")) {
-      const fullId = url.searchParams.get("meta");
-      const tvmazeId = fullId.split(":")[1];
-
-      const showRes = await fetch(`https://api.tvmaze.com/shows/${tvmazeId}`);
-      const show = showRes.ok ? await showRes.json() : null;
-
-      const epsRes = await fetch(`https://api.tvmaze.com/shows/${tvmazeId}/episodes`);
-      const epsRaw = epsRes.ok ? await epsRes.json() : [];
-
-      const episodes = epsRaw.map(ep => ({
-        id: `tvmaze:${tvmazeId}:s${ep.season}e${ep.number}`,
-        type: "episode",
-        series: fullId,
-        name: ep.name || `S${ep.season}E${ep.number}`,
-        season: ep.season,
-        episode: ep.number,
-        released: ep.airdate || null
-      }));
-
-      return res.status(200).json({
-        meta: {
-          id: fullId,
+        uniqueShows[e.show.id] = {
+          id: `tvmaze:${e.show.id}`,
           type: "series",
-          name: show?.name || "Untitled Show",
-          poster: show?.image?.original || show?.image?.medium || null,
-          description: (show?.summary || "").replace(/<[^>]*>/g, ""),
-          episodes: episodes || []
-        }
+          name: e.show.name,
+          poster: e.show.image?.medium || null,
+          description: (e.show.summary || "").replace(/<[^>]+>/g, "")
+        };
       });
+
+      return new Response(JSON.stringify({ metas: Object.values(uniqueShows) }), { headers: HEADERS });
+    } catch (err) {
+      console.error("CATALOG ERROR", err);
+      return new Response(JSON.stringify({ metas: [] }), { headers: HEADERS });
     }
-
-    // default fallback
-    res.status(200).json({ status: "ok" });
-
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: err.toString() });
   }
-};
+
+  // ------------------------------
+  // Meta endpoint
+  // ------------------------------
+  if (id && id.startsWith("tvmaze:") && type === "series") {
+    const showId = id.split(":")[1];
+    try {
+      const [showResp, epsResp] = await Promise.all([
+        fetch(`https://api.tvmaze.com/shows/${showId}`),
+        fetch(`https://api.tvmaze.com/shows/${showId}/episodes`)
+      ]);
+
+      if (!showResp.ok) throw new Error("Show not found");
+
+      const show = await showResp.json();
+      const eps = epsResp.ok ? await epsResp.json() : [];
+
+      const metaObj = {
+        id,
+        type: "series",
+        name: show.name || "",
+        poster: show.image?.original || show.image?.medium || null,
+        description: (show.summary || "").replace(/<[^>]+>/g, ""),
+        episodes: eps.map(ep => ({
+          id: `tvmaze:${showId}:${ep.id}`,
+          series: id,
+          type: "episode",
+          name: ep.name || "",
+          season: ep.season || 0,
+          episode: ep.number || 0,
+          released: ep.airdate || null
+        }))
+      };
+
+      return new Response(JSON.stringify({ meta: metaObj }), { headers: HEADERS });
+    } catch (err) {
+      console.error("META ERROR", err);
+      return new Response(JSON.stringify({ meta: {} }), { headers: HEADERS });
+    }
+  }
+
+  return new Response(JSON.stringify({ status: "ok" }), { headers: HEADERS });
+}
