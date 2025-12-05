@@ -1,4 +1,4 @@
-const fetch = (...args) => import("node-fetch").then(m => m.default(...args));
+const fetch = require("node-fetch");   // ← stable, no async import
 
 const HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -8,14 +8,13 @@ const HEADERS = {
 };
 
 module.exports = async (req, res) => {
+  // send CORS headers immediately
   for (const h in HEADERS) res.setHeader(h, HEADERS[h]);
   if (req.method === "OPTIONS") return res.status(200).end();
 
   const { manifest, catalog, type, id } = req.query;
 
-  // --------------------------
   // MANIFEST
-  // --------------------------
   if (manifest !== undefined) {
     return res.status(200).json({
       id: "recent.tvmaze",
@@ -32,24 +31,19 @@ module.exports = async (req, res) => {
     });
   }
 
-  // --------------------------
-  // CATALOG (FAST)
-  // --------------------------
+  // CATALOG
   if (catalog === "recent" && type === "series") {
     try {
-      const today = new Date();
-      const pstNow = new Date(
-        today.toLocaleString("en-US", { timeZone: "America/Los_Angeles" })
-      );
+      const now = new Date();
+      const pst = new Date(now.toLocaleString("en-US", { timeZone: "America/Los_Angeles" }));
 
       const days = [];
       for (let i = 0; i < 7; i++) {
-        const d = new Date(pstNow);
-        d.setDate(pstNow.getDate() - i);
+        const d = new Date(pst);
+        d.setDate(pst.getDate() - i);
         days.push(d.toISOString().split("T")[0]);
       }
 
-      // Fetch episodes for each of last 7 PST days
       let allEpisodes = [];
 
       for (const d of days) {
@@ -63,69 +57,67 @@ module.exports = async (req, res) => {
 
       allEpisodes.forEach(ep => {
         if (!ep.show) return;
-
-        // exclude talk/news
         if (["Talk Show", "News"].includes(ep.show.type)) return;
 
         const airdate = ep.airdate || ep.airstamp?.split("T")[0];
         if (!airdate) return;
 
-        // choose most recent episode per show
-        if (!byShow[ep.show.id] || byShow[ep.show.id].airdate < airdate) {
-          byShow[ep.show.id] = {
-            showId: ep.show.id,
-            id: "tvmaze:" + ep.show.id,
+        const s = ep.show;
+
+        if (!byShow[s.id] || byShow[s.id].airdate < airdate) {
+          byShow[s.id] = {
+            id: "tvmaze:" + s.id,
             type: "series",
-            name: ep.show.name,
-            poster: ep.show.image?.medium || null,
-            description: ep.show.summary?.replace(/<[^>]*>/g, "") || "",
+            name: s.name,
+            poster: s.image?.medium || null,
+            description: s.summary?.replace(/<[^>]*>/g, "") || "",
             airdate
           };
         }
       });
 
-      // Sort by most recent airdate
       const sorted = Object.values(byShow).sort((a, b) =>
         a.airdate < b.airdate ? 1 : -1
       );
 
       return res.status(200).json({ metas: sorted });
-    } catch (e) {
-      console.error("CATALOG ERROR", e);
+
+    } catch (err) {
+      console.error("CATALOG ERROR:", err);
       return res.status(200).json({ metas: [] });
     }
   }
 
-  // --------------------------
-  // META (fetch full series)
-  // --------------------------
+  // META
   if (id && id.startsWith("tvmaze:") && type === "series") {
-    const showId = id.replace("tvmaze:", "");
     try {
-      const showData = await fetch(`https://api.tvmaze.com/shows/${showId}`).then(r => r.json());
-      const epsData = await fetch(`https://api.tvmaze.com/shows/${showId}/episodes`).then(r => r.json());
+      const showId = id.replace("tvmaze:", "");
 
-      const meta = {
-        id,
-        type: "series",
-        name: showData.name,
-        poster: showData.image?.original || showData.image?.medium || null,
-        description: showData.summary?.replace(/<[^>]*>/g, "") || "",
-        episodes: epsData.map(e => ({
-          id: `tvmaze:${showId}:s${e.season}e${e.number}`,
-          series: id,
-          type: "episode",
-          season: e.season,
-          episode: e.number,
-          name: e.name,
-          released: e.airdate,
-          thumbnail: e.image?.medium || null
-        }))
-      };
+      const show = await fetch(`https://api.tvmaze.com/shows/${showId}`).then(r => r.json());
+      const eps = await fetch(`https://api.tvmaze.com/shows/${showId}/episodes`).then(r => r.json());
 
-      return res.status(200).json({ meta });
-    } catch (e) {
-      console.error("META ERROR", e);
+      return res.status(200).json({
+        meta: {
+          id,
+          type: "series",
+          name: show.name,
+          poster: show.image?.original || show.image?.medium || null,
+          description: show.summary?.replace(/<[^>]*>/g, "") || "",
+          episodes: eps.map(e => ({
+            id: `tvmaze:${showId}:s${e.season}e${e.number}`,
+            series: id,
+            type: "episode",
+            season: e.season,
+            episode: e.number,
+            name: e.name,
+            released: e.airdate,
+            thumbnail: e.image?.medium || null
+          }))
+        }
+      });
+
+    } catch (err) {
+      console.error("META ERROR:", err);
       return res.status(200).json({ meta: {} });
     }
   }
