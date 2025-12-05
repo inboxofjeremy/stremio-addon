@@ -1,17 +1,13 @@
 {
-  "id": "org.example.recentshows",
+  "id": "org.example.tvmaze.recent7",
   "version": "1.0.0",
-  "name": "Recent Shows (TVmaze)",
-  "description": "Shows aired in the last 7 days excluding Talk Shows/News",
+  "name": "TVmaze — Recent 7 days",
+  "description": "Shows aired in the last 7 days (excludes Talk Show & News). Dynamic meta via TVmaze.",
   "resources": ["catalog", "meta"],
   "types": ["series"],
   "catalogs": [
-    {
-      "type": "series",
-      "id": "recent",
-      "name": "Recent Shows"
-    }
+    { "type": "series", "id": "recent7", "name": "Recent 7 days (TVmaze)" }
   ],
-  "idPrefixes": [],
+  "idPrefixes": ["tvmaze:"],
   "endpoint": "https://stremio-addon-three.vercel.app/api"
 }
