@@ -1,14 +1,12 @@
 {
-  "name": "stremio-tvmaze-static",
+  "name": "stremio-addon",
   "version": "1.0.0",
+  "description": "Recent shows addon using TVMaze API",
+  "main": "api/index.js",
   "scripts": {
-    "generate": "node scripts/generate_cache.js",
     "start": "vercel dev"
   },
-  "dependencies": {
-    "axios": "^1.6.0",
-    "mkdirp": "^1.0.4"
-  },
+  "dependencies": {},
   "engines": {
     "node": "24.x"
   }
