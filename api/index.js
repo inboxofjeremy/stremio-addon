@@ -1,5 +1,3 @@
-import fetch from "node-fetch";
-
 const HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET,OPTIONS",
@@ -28,7 +26,7 @@ export default async function handler(req, res) {
         { id: "recent", type: "series", name: "Recent Episodes" }
       ],
       idPrefixes: ["tvmaze:"],
-      endpoint: "https://" + req.headers.host + "/api"
+      endpoint: `https://${req.headers.host}/api`
     });
   }
 
@@ -47,17 +45,17 @@ export default async function handler(req, res) {
         days.push(d.toISOString().split("T")[0]);
       }
 
-      let allEpisodes = [];
+      let episodes = [];
 
       for (const d of days) {
         const r = await fetch(`https://api.tvmaze.com/schedule?country=US&date=${d}`);
         const j = await r.json();
-        allEpisodes.push(...j);
+        episodes.push(...j);
       }
 
       const byShow = {};
 
-      allEpisodes.forEach(ep => {
+      episodes.forEach(ep => {
         if (!ep.show) return;
         if (["Talk Show", "News"].includes(ep.show.type)) return;
 
@@ -66,9 +64,10 @@ export default async function handler(req, res) {
 
         const s = ep.show;
 
+        // Keep the most recent episode per show
         if (!byShow[s.id] || byShow[s.id].airdate < airdate) {
           byShow[s.id] = {
-            id: "tvmaze:" + s.id,
+            id: `tvmaze:${s.id}`,
             type: "series",
             name: s.name,
             poster: s.image?.medium || null,
