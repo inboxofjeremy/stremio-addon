@@ -1,0 +1,12 @@
+{
+  "rewrites": [
+    {
+      "source": "/catalog/series/recent.json",
+      "destination": "/api?catalog=recent&type=series"
+    },
+    {
+      "source": "/catalog/series/:id.json",
+      "destination": "/api?id=:id&type=series"
+    }
+  ]
+}
