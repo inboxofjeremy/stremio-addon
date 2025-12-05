@@ -1,4 +1,4 @@
-const fetch = require("node-fetch");   // ← stable, no async import
+import fetch from "node-fetch";
 
 const HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -7,14 +7,15 @@ const HEADERS = {
   "Content-Type": "application/json"
 };
 
-module.exports = async (req, res) => {
-  // send CORS headers immediately
+export default async function handler(req, res) {
   for (const h in HEADERS) res.setHeader(h, HEADERS[h]);
   if (req.method === "OPTIONS") return res.status(200).end();
 
   const { manifest, catalog, type, id } = req.query;
 
+  // -----------------------
   // MANIFEST
+  // -----------------------
   if (manifest !== undefined) {
     return res.status(200).json({
       id: "recent.tvmaze",
@@ -31,7 +32,9 @@ module.exports = async (req, res) => {
     });
   }
 
-  // CATALOG
+  // -----------------------
+  // CATALOG (FAST)
+  // -----------------------
   if (catalog === "recent" && type === "series") {
     try {
       const now = new Date();
@@ -47,8 +50,7 @@ module.exports = async (req, res) => {
       let allEpisodes = [];
 
       for (const d of days) {
-        const url = `https://api.tvmaze.com/schedule?country=US&date=${d}`;
-        const r = await fetch(url);
+        const r = await fetch(`https://api.tvmaze.com/schedule?country=US&date=${d}`);
         const j = await r.json();
         allEpisodes.push(...j);
       }
@@ -88,7 +90,9 @@ module.exports = async (req, res) => {
     }
   }
 
+  // -----------------------
   // META
+  // -----------------------
   if (id && id.startsWith("tvmaze:") && type === "series") {
     try {
       const showId = id.replace("tvmaze:", "");
@@ -123,4 +127,4 @@ module.exports = async (req, res) => {
   }
 
   return res.status(200).json({ status: "ok" });
-};
+}
