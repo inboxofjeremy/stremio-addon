@@ -3,11 +3,10 @@
   "version": "1.0.0",
   "name": "Recent TV (TVMaze)",
   "description": "Shows aired in the last 7 days",
-  "resources": ["catalog", "meta"],
   "types": ["series"],
+  "resources": ["catalog","meta"],
   "catalogs": [
     { "id": "recent", "type": "series", "name": "Recent TV (7 days)" }
   ],
-  "idPrefixes": ["tvmaze:"],
-  "endpoint": "https://stremio-addon-three.vercel.app/api"
+  "idPrefixes": ["tvmaze"]
 }
