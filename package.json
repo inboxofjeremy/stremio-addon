@@ -1,13 +1,8 @@
 {
-  "name": "stremio-tvmaze-addon",
+  "name": "stremio-addon",
   "version": "1.0.0",
+  "main": "api/index.js",
   "type": "module",
-  "scripts": {
-    "dev": "vercel dev",
-    "start": "vercel dev"
-  },
   "dependencies": {},
-  "engines": {
-    "node": "24.x"
-  }
+  "engines": { "node": "20.x" }
 }
