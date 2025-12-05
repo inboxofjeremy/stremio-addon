@@ -2,7 +2,7 @@
   "id": "com.yourname.recentmaze",
   "version": "1.0.0",
   "name": "Recent TV (TVMaze)",
-  "description": "Shows aired in the last 7 days",
+  "description": "Shows with episodes aired in last 7 PST days",
   "types": ["series"],
   "resources": ["catalog","meta"],
   "catalogs": [
