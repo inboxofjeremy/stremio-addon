@@ -1,0 +1,28 @@
+name: Generate TVmaze static catalog
+on:
+  schedule:
+    - cron: '0 2 * * *' # daily at 02:00 UTC
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install deps
+        run: npm ci
+      - name: Generate static catalog
+        env:
+          TVMAZE_COUNTRY: US
+        run: npm run generate
+      - name: Commit changes
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add public || true
+          git commit -m "Auto update TVmaze static catalog" || echo "no changes"
+          git push || echo "push failed"
