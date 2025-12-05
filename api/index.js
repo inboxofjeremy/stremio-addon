@@ -5,33 +5,27 @@ module.exports = async (req, res) => {
   try {
     const url = new URL(req.url, `https://${req.headers.host}`);
 
-    // ───── CATALOG: recent ───────────────────────────
+    // ───── CATALOG ────────────────────────────────
     if (url.searchParams.get("catalog") === "recent") {
       const today = new Date();
-      const dates = [];
-
-      for (let i = 0; i < 7; i++) {
+      const days = Array.from({ length: 7 }, (_, i) => {
         const d = new Date(today);
         d.setDate(today.getDate() - i);
-        dates.push(d.toISOString().split("T")[0]);
-      }
+        return d.toISOString().split("T")[0];
+      });
 
-      const results = [];
+      // fetch all 7 days in parallel
+      const fetches = days.map(day =>
+        fetch(`https://api.tvmaze.com/schedule?country=US&date=${day}`).then(r => r.ok ? r.json() : [])
+      );
+      const resultsArr = await Promise.all(fetches);
 
-      for (const day of dates) {
-        const r = await fetch(
-          `https://api.tvmaze.com/schedule?country=US&date=${day}`
-        );
-        if (r.ok) results.push(...(await r.json()));
-      }
+      const results = resultsArr.flat();
 
       const uniq = new Map();
-
       for (const item of results) {
         if (!item.show || !item.show.id) continue;
-
         const id = `tvmaze:${item.show.id}`;
-
         if (!uniq.has(id)) {
           uniq.set(id, {
             id,
@@ -46,35 +40,37 @@ module.exports = async (req, res) => {
       return res.status(200).json({ metas: [...uniq.values()] });
     }
 
-    // ───── META: single show ─────────────────────────
+    // ───── META ────────────────────────────────
     if (url.searchParams.has("meta")) {
-      const full = url.searchParams.get("meta");
-      const tmId = full.split(":")[1];
+      const fullId = url.searchParams.get("meta");
+      const tvmazeId = fullId.split(":")[1];
 
-      const s = await fetch(`https://api.tvmaze.com/shows/${tmId}`);
-      if (!s.ok) return res.status(404).json({});
+      const showRes = await fetch(`https://api.tvmaze.com/shows/${tvmazeId}`);
+      if (!showRes.ok) return res.status(404).json({});
 
-      const show = await s.json();
+      const show = await showRes.json();
 
-      const e = await fetch(`https://api.tvmaze.com/shows/${tmId}/episodes`);
-      const eps = e.ok ? await e.json() : [];
+      const epsRes = await fetch(`https://api.tvmaze.com/shows/${tvmazeId}/episodes`);
+      const epsRaw = epsRes.ok ? await epsRes.json() : [];
+
+      const episodes = epsRaw.map(ep => ({
+        id: `tvmaze:${tvmazeId}:s${ep.season}e${ep.number}`,
+        type: "episode",
+        series: fullId,
+        name: ep.name,
+        season: ep.season,
+        episode: ep.number,
+        released: ep.airdate || null
+      }));
 
       return res.status(200).json({
         meta: {
-          id: full,
+          id: fullId,
           type: "series",
           name: show.name,
           poster: show.image?.original || show.image?.medium || null,
           description: (show.summary || "").replace(/<[^>]*>/g, ""),
-          episodes: eps.map(ep => ({
-            id: `tvmaze:${tmId}:s${ep.season}e${ep.number}`,
-            type: "episode",
-            series: full,
-            name: ep.name,
-            season: ep.season,
-            episode: ep.number,
-            released: ep.airdate || null
-          }))
+          episodes
         }
       });
     }
