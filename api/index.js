@@ -1,3 +1,6 @@
+// ---------------------------------------------------------
+// HEADERS
+// ---------------------------------------------------------
 const HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET,OPTIONS",
@@ -5,83 +8,137 @@ const HEADERS = {
   "Content-Type": "application/json"
 };
 
+// TVMaze throttling-safe fetch
+async function safeFetch(url) {
+  const r = await fetch(url);
+  if (!r.ok) return null;
+  return r.json();
+}
+
 export default async function handler(req, res) {
   for (const h in HEADERS) res.setHeader(h, HEADERS[h]);
   if (req.method === "OPTIONS") return res.status(200).end();
 
   const { manifest, catalog, type, id } = req.query;
 
-  // -----------------------
+  // ---------------------------------------------------------
   // MANIFEST
-  // -----------------------
+  // ---------------------------------------------------------
   if (manifest !== undefined) {
     return res.status(200).json({
       id: "recent.tvmaze",
       version: "1.0.0",
       name: "Recent Episodes (TVmaze)",
-      description: "Shows with episodes in last 7 PST days",
+      description: "Shows with episodes aired in last 7 PST days",
       types: ["series"],
       resources: ["catalog", "meta"],
       catalogs: [
-        { id: "recent", type: "series", name: "Recent Episodes" }
+        { id: "recent", type: "series", name: "Recent Episodes (7 days)" }
       ],
       idPrefixes: ["tvmaze:"],
       endpoint: `https://${req.headers.host}/api`
     });
   }
 
-  // -----------------------
-  // CATALOG (FAST)
-  // -----------------------
+  // ---------------------------------------------------------
+  // CATALOG — TRUE 7-DAY PST EPISODE SCAN (FAST)
+  // ---------------------------------------------------------
   if (catalog === "recent" && type === "series") {
     try {
+      // Convert now -> PST
       const now = new Date();
-      const pst = new Date(now.toLocaleString("en-US", { timeZone: "America/Los_Angeles" }));
+      const pstNow = new Date(
+        now.toLocaleString("en-US", { timeZone: "America/Los_Angeles" })
+      );
 
+      // Compute list of PST dates (yyyy-mm-dd)
       const days = [];
       for (let i = 0; i < 7; i++) {
-        const d = new Date(pst);
-        d.setDate(pst.getDate() - i);
+        const d = new Date(pstNow);
+        d.setDate(pstNow.getDate() - i);
         days.push(d.toISOString().split("T")[0]);
       }
 
-      let episodes = [];
-
-      for (const d of days) {
-        const r = await fetch(`https://api.tvmaze.com/schedule?country=US&date=${d}`);
-        const j = await r.json();
-        episodes.push(...j);
-      }
-
-      const byShow = {};
-
-      episodes.forEach(ep => {
-        if (!ep.show) return;
-        if (["Talk Show", "News"].includes(ep.show.type)) return;
-
-        const airdate = ep.airdate || ep.airstamp?.split("T")[0];
-        if (!airdate) return;
-
-        const s = ep.show;
-
-        // Keep the most recent episode per show
-        if (!byShow[s.id] || byShow[s.id].airdate < airdate) {
-          byShow[s.id] = {
-            id: `tvmaze:${s.id}`,
-            type: "series",
-            name: s.name,
-            poster: s.image?.medium || null,
-            description: s.summary?.replace(/<[^>]*>/g, "") || "",
-            airdate
-          };
-        }
-      });
-
-      const sorted = Object.values(byShow).sort((a, b) =>
-        a.airdate < b.airdate ? 1 : -1
+      // Fetch the full US schedule for each day — FAST PARALLEL
+      const scheduleUrls = days.map(
+        d => `https://api.tvmaze.com/schedule?country=US&date=${d}`
+      );
+      const scheduleResults = await Promise.all(
+        scheduleUrls.map(url => safeFetch(url))
       );
 
-      return res.status(200).json({ metas: sorted });
+      // Flatten episodes
+      let allEpisodes = [];
+      for (const r of scheduleResults) {
+        if (Array.isArray(r)) allEpisodes.push(...r);
+      }
+
+      // Collect unique show IDs we need episode-date verification for
+      const showIds = [...new Set(allEpisodes.map(ep => ep.show?.id).filter(Boolean))];
+
+      // Fetch episodes for each show - but batched (TVMaze rate limits!)
+      const chunkSize = 10;
+      const episodeFetches = [];
+
+      for (let i = 0; i < showIds.length; i += chunkSize) {
+        const chunk = showIds.slice(i, i + chunkSize);
+        episodeFetches.push(
+          Promise.all(
+            chunk.map(id =>
+              safeFetch(`https://api.tvmaze.com/shows/${id}/episodes`)
+                .then(eps => ({ id, eps }))
+            )
+          )
+        );
+      }
+
+      const episodeResults = (await Promise.all(episodeFetches)).flat();
+
+      // Build a map: showId -> last aired episode date
+      const lastAired = {};
+
+      for (const { id: showId, eps } of episodeResults) {
+        if (!Array.isArray(eps)) continue;
+
+        for (const e of eps) {
+          const airdate = e.airdate || e.airstamp?.split("T")[0];
+          if (!airdate) continue;
+
+          if (!lastAired[showId] || lastAired[showId] < airdate) {
+            lastAired[showId] = airdate;
+          }
+        }
+      }
+
+      // Filter shows whose latest episode is within PST last 7 days
+      const recentShows = [];
+
+      for (const showId of showIds) {
+        const latest = lastAired[showId];
+        if (!latest) continue;
+
+        if (days.includes(latest)) {
+          // Get basic show info (from schedule, reliable)
+          const exampleEpisode = allEpisodes.find(ep => ep.show?.id === showId);
+          if (!exampleEpisode) continue;
+
+          const s = exampleEpisode.show;
+
+          recentShows.push({
+            id: `tvmaze:${showId}`,
+            type: "series",
+            name: s.name,
+            poster: s.image?.medium || s.image?.original || null,
+            description: s.summary?.replace(/<[^>]*>/g, "") || "",
+            airdate: latest
+          });
+        }
+      }
+
+      // Sort by latest episode
+      recentShows.sort((a, b) => (a.airdate < b.airdate ? 1 : -1));
+
+      return res.status(200).json({ metas: recentShows });
 
     } catch (err) {
       console.error("CATALOG ERROR:", err);
@@ -89,15 +146,17 @@ export default async function handler(req, res) {
     }
   }
 
-  // -----------------------
-  // META
-  // -----------------------
+  // ---------------------------------------------------------
+  // META — FULL SEASONS + EPISODES FOR SHOW
+  // ---------------------------------------------------------
   if (id && id.startsWith("tvmaze:") && type === "series") {
     try {
       const showId = id.replace("tvmaze:", "");
 
-      const show = await fetch(`https://api.tvmaze.com/shows/${showId}`).then(r => r.json());
-      const eps = await fetch(`https://api.tvmaze.com/shows/${showId}/episodes`).then(r => r.json());
+      const show = await safeFetch(`https://api.tvmaze.com/shows/${showId}`);
+      const eps = await safeFetch(`https://api.tvmaze.com/shows/${showId}/episodes`);
+
+      if (!show) return res.status(200).json({ meta: {} });
 
       return res.status(200).json({
         meta: {
@@ -106,15 +165,15 @@ export default async function handler(req, res) {
           name: show.name,
           poster: show.image?.original || show.image?.medium || null,
           description: show.summary?.replace(/<[^>]*>/g, "") || "",
-          episodes: eps.map(e => ({
+          episodes: (eps || []).map(e => ({
             id: `tvmaze:${showId}:s${e.season}e${e.number}`,
             series: id,
             type: "episode",
             season: e.season,
             episode: e.number,
             name: e.name,
-            released: e.airdate,
-            thumbnail: e.image?.medium || null
+            released: e.airdate || null,
+            thumbnail: e.image?.medium || e.image?.original || null
           }))
         }
       });
