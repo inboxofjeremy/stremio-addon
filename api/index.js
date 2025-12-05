@@ -1,64 +1,39 @@
-// /api/index.js
-// NO node-fetch required — Node 18+ on Vercel already supports global fetch
-
-const MANIFEST = {
-  id: "com.yourname.recentmaze",
-  version: "1.0.0",
-  name: "Recent TV (TVMaze)",
-  description: "Shows aired in the last 7 days",
-  resources: ["catalog", "meta"],
-  types: ["series"],
-  catalogs: [
-    {
-      id: "recent",
-      type: "series",
-      name: "Recent TV (7 days)"
-    }
-  ],
-  idPrefixes: ["tvmaze:"],
-  endpoint: "" // will get filled dynamically
-};
-
 module.exports = async (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Content-Type", "application/json");
+
   try {
     const url = new URL(req.url, `https://${req.headers.host}`);
-    const endpoint = `https://${req.headers.host}/api`;
-    MANIFEST.endpoint = endpoint;
 
-    // ───── MANIFEST ─────────────────────────────────────────
-    if (url.searchParams.has("manifest")) {
-      return res.status(200).json(MANIFEST);
-    }
-
-    // ───── CATALOG ───────────────────────────────────────────
+    // ───── CATALOG: recent ───────────────────────────
     if (url.searchParams.get("catalog") === "recent") {
       const today = new Date();
-      const days = [];
+      const dates = [];
 
       for (let i = 0; i < 7; i++) {
         const d = new Date(today);
         d.setDate(today.getDate() - i);
-        days.push(d.toISOString().split("T")[0]);
+        dates.push(d.toISOString().split("T")[0]);
       }
 
       const results = [];
 
-      for (const day of days) {
-        const r = await fetch(`https://api.tvmaze.com/schedule?country=US&date=${day}`);
-        if (r.ok) {
-          results.push(...(await r.json()));
-        }
+      for (const day of dates) {
+        const r = await fetch(
+          `https://api.tvmaze.com/schedule?country=US&date=${day}`
+        );
+        if (r.ok) results.push(...(await r.json()));
       }
 
-      const map = new Map();
+      const uniq = new Map();
 
       for (const item of results) {
         if (!item.show || !item.show.id) continue;
 
         const id = `tvmaze:${item.show.id}`;
 
-        if (!map.has(id)) {
-          map.set(id, {
+        if (!uniq.has(id)) {
+          uniq.set(id, {
             id,
             type: "series",
             name: item.show.name,
@@ -68,51 +43,46 @@ module.exports = async (req, res) => {
         }
       }
 
-      return res.status(200).json({ metas: [...map.values()] });
+      return res.status(200).json({ metas: [...uniq.values()] });
     }
 
-    // ───── META ──────────────────────────────────────────────
+    // ───── META: single show ─────────────────────────
     if (url.searchParams.has("meta")) {
-      const fullId = url.searchParams.get("meta");
-      const tvmazeId = fullId.split(":")[1];
+      const full = url.searchParams.get("meta");
+      const tmId = full.split(":")[1];
 
-      // get show
-      const showRes = await fetch(`https://api.tvmaze.com/shows/${tvmazeId}`);
-      if (!showRes.ok) return res.status(404).json({});
+      const s = await fetch(`https://api.tvmaze.com/shows/${tmId}`);
+      if (!s.ok) return res.status(404).json({});
 
-      const show = await showRes.json();
+      const show = await s.json();
 
-      // get episodes
-      const epsRes = await fetch(`https://api.tvmaze.com/shows/${tvmazeId}/episodes`);
-      const epsRaw = epsRes.ok ? await epsRes.json() : [];
+      const e = await fetch(`https://api.tvmaze.com/shows/${tmId}/episodes`);
+      const eps = e.ok ? await e.json() : [];
 
-      const episodes = epsRaw.map(ep => ({
-        id: `tvmaze:${tvmazeId}:s${ep.season}e${ep.number}`,
-        type: "episode",
-        series: `tvmaze:${tvmazeId}`,
-        name: ep.name,
-        season: ep.season,
-        episode: ep.number,
-        released: ep.airdate || null
-      }));
-
-      const meta = {
-        id: fullId,
-        type: "series",
-        name: show.name,
-        poster: show.image?.original || show.image?.medium || null,
-        description: (show.summary || "").replace(/<[^>]*>/g, ""),
-        episodes
-      };
-
-      return res.status(200).json({ meta });
+      return res.status(200).json({
+        meta: {
+          id: full,
+          type: "series",
+          name: show.name,
+          poster: show.image?.original || show.image?.medium || null,
+          description: (show.summary || "").replace(/<[^>]*>/g, ""),
+          episodes: eps.map(ep => ({
+            id: `tvmaze:${tmId}:s${ep.season}e${ep.number}`,
+            type: "episode",
+            series: full,
+            name: ep.name,
+            season: ep.season,
+            episode: ep.number,
+            released: ep.airdate || null
+          }))
+        }
+      });
     }
 
-    // default
-    res.status(200).json({ status: "online" });
+    res.status(200).json({ status: "ok" });
 
   } catch (err) {
-    console.error("Addon error:", err);
+    console.error(err);
     res.status(500).json({ error: err.toString() });
   }
 };
