@@ -1,13 +1,13 @@
 {
-  "id": "org.example.tvmaze.recent7.static",
+  "id": "com.yourname.recentmaze",
   "version": "1.0.0",
-  "name": "TVmaze — Recent 7 days (Static)",
-  "description": "Static Stremio addon: shows with air date in last 7 days (full episodes).",
+  "name": "Recent TV (TVMaze)",
+  "description": "Shows aired in the last 7 days",
   "resources": ["catalog", "meta"],
   "types": ["series"],
   "catalogs": [
-    { "type": "series", "id": "recent7", "name": "Recent 7 days (TVmaze)" }
+    { "id": "recent", "type": "series", "name": "Recent TV (7 days)" }
   ],
   "idPrefixes": ["tvmaze:"],
-  "endpoint": "https://stremio-addon-three.vercel.app"
+  "endpoint": "https://stremio-addon-three.vercel.app/api"
 }
