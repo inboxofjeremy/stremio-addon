@@ -27,7 +27,6 @@ export default async function handler(req) {
         // PST is UTC-8
         const dt = new Date(today.getTime() - i * 24 * 60 * 60 * 1000);
         const pstDt = new Date(dt.getTime() - 8 * 60 * 60 * 1000); // UTC-8
-
         const dateStr = pstDt.toISOString().split("T")[0];
 
         const resp = await fetch(`https://api.tvmaze.com/schedule?country=US&date=${dateStr}`);
@@ -72,7 +71,7 @@ export default async function handler(req) {
   }
 
   // ------------------------------
-  // 2️⃣ Meta endpoint
+  // 2️⃣ Meta endpoint: show + episodes with thumbnails
   // ------------------------------
   if (id && id.startsWith("tvmaze:") && type === "series") {
     const showId = id.split(":")[1];
@@ -100,7 +99,8 @@ export default async function handler(req) {
           name: ep.name || "",
           season: ep.season || 0,
           episode: ep.number || 0,
-          released: ep.airdate || null
+          released: ep.airdate || null,
+          poster: ep.image?.medium || ep.image?.original || null
         }))
       };
 
