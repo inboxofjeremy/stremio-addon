@@ -1,9 +1,9 @@
 {
-  "name": "stremio-addon",
+  "name": "stremio-tvmaze-addon",
   "version": "1.0.0",
-  "description": "Recent shows addon using TVMaze API",
-  "main": "api/index.js",
+  "type": "module",
   "scripts": {
+    "dev": "vercel dev",
     "start": "vercel dev"
   },
   "dependencies": {},
