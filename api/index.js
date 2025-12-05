@@ -16,7 +16,7 @@ export default async function handler(req) {
   const id = url.searchParams.get("id");
 
   // ------------------------------
-  // Catalog endpoint
+  // 1️⃣ Catalog endpoint: last 7 PST days, sorted by latest airdate
   // ------------------------------
   if (catalog === "recent" && type === "series") {
     try {
@@ -24,30 +24,47 @@ export default async function handler(req) {
       let allShows = [];
 
       for (let i = 0; i < 7; i++) {
-        const dt = new Date(today);
-        dt.setDate(today.getDate() - i);
-        const dateStr = dt.toISOString().split("T")[0];
+        // PST is UTC-8
+        const dt = new Date(today.getTime() - i * 24 * 60 * 60 * 1000);
+        const pstDt = new Date(dt.getTime() - 8 * 60 * 60 * 1000); // UTC-8
+
+        const dateStr = pstDt.toISOString().split("T")[0];
 
         const resp = await fetch(`https://api.tvmaze.com/schedule?country=US&date=${dateStr}`);
         const json = await resp.json();
-        allShows = allShows.concat(json);
+        allShows.push(...json);
       }
 
+      // Map unique shows with latest airdate
       const uniqueShows = {};
       allShows.forEach(e => {
         if (!e.show) return;
         if (["Talk Show", "News"].includes(e.show.type)) return;
 
-        uniqueShows[e.show.id] = {
-          id: `tvmaze:${e.show.id}`,
-          type: "series",
-          name: e.show.name,
-          poster: e.show.image?.medium || null,
-          description: (e.show.summary || "").replace(/<[^>]+>/g, "")
-        };
+        const existing = uniqueShows[e.show.id];
+        const airdate = e.airdate || "1900-01-01";
+
+        if (!existing || new Date(airdate) > new Date(existing.latestAirdate)) {
+          uniqueShows[e.show.id] = {
+            id: `tvmaze:${e.show.id}`,
+            type: "series",
+            name: e.show.name,
+            poster: e.show.image?.medium || null,
+            description: (e.show.summary || "").replace(/<[^>]+>/g, ""),
+            latestAirdate: airdate
+          };
+        }
       });
 
-      return new Response(JSON.stringify({ metas: Object.values(uniqueShows) }), { headers: HEADERS });
+      // Sort descending by latest airdate
+      const sortedShows = Object.values(uniqueShows).sort((a, b) =>
+        new Date(b.latestAirdate) - new Date(a.latestAirdate)
+      );
+
+      // Remove latestAirdate before returning
+      const metas = sortedShows.map(({ latestAirdate, ...rest }) => rest);
+
+      return new Response(JSON.stringify({ metas }), { headers: HEADERS });
     } catch (err) {
       console.error("CATALOG ERROR", err);
       return new Response(JSON.stringify({ metas: [] }), { headers: HEADERS });
@@ -55,7 +72,7 @@ export default async function handler(req) {
   }
 
   // ------------------------------
-  // Meta endpoint
+  // 2️⃣ Meta endpoint
   // ------------------------------
   if (id && id.startsWith("tvmaze:") && type === "series") {
     const showId = id.split(":")[1];
@@ -94,6 +111,8 @@ export default async function handler(req) {
     }
   }
 
+  // ------------------------------
   // Default fallback
+  // ------------------------------
   return new Response(JSON.stringify({ status: "ok" }), { headers: HEADERS });
 }
