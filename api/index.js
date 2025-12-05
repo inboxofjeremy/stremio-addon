@@ -15,50 +15,68 @@ export default async function handler(req) {
   const type = url.searchParams.get("type");
   const id = url.searchParams.get("id");
 
+  const PST_OFFSET = -8; // PST is UTC-8
+  const now = new Date();
+
   // ------------------------------
-  // 1️⃣ Catalog endpoint: last 7 PST days, sorted by latest airdate
+  // 1️⃣ Catalog endpoint
   // ------------------------------
   if (catalog === "recent" && type === "series") {
     try {
-      const today = new Date();
       let allShows = [];
+      let page = 0;
+      let more = true;
 
-      for (let i = 0; i < 7; i++) {
-        // PST is UTC-8
-        const dt = new Date(today.getTime() - i * 24 * 60 * 60 * 1000);
-        const pstDt = new Date(dt.getTime() - 8 * 60 * 60 * 1000); // UTC-8
-        const dateStr = pstDt.toISOString().split("T")[0];
-
-        const resp = await fetch(`https://api.tvmaze.com/schedule?country=US&date=${dateStr}`);
-        const json = await resp.json();
-        allShows.push(...json);
+      while (more) {
+        const resp = await fetch(`https://api.tvmaze.com/shows?page=${page}`);
+        const shows = await resp.json();
+        if (!shows || shows.length === 0) {
+          more = false;
+          break;
+        }
+        allShows.push(...shows);
+        page++;
+        if (page > 5) break; // limit to first 6 pages (approx 1500 shows) for performance
       }
 
-      // Map unique shows with latest airdate
-      const uniqueShows = {};
-      allShows.forEach(e => {
-        if (!e.show) return;
-        if (["Talk Show", "News"].includes(e.show.type)) return;
+      const recentShows = [];
 
-        const existing = uniqueShows[e.show.id];
-        const airdate = e.airdate || "1900-01-01";
+      for (const show of allShows) {
+        // Fetch all episodes for the show
+        const epsResp = await fetch(`https://api.tvmaze.com/shows/${show.id}/episodes`);
+        const episodes = epsResp.ok ? await epsResp.json() : [];
 
-        if (!existing || new Date(airdate) > new Date(existing.latestAirdate)) {
-          uniqueShows[e.show.id] = {
-            id: `tvmaze:${e.show.id}`,
-            type: "series",
-            name: e.show.name,
-            poster: e.show.image?.medium || null,
-            description: (e.show.summary || "").replace(/<[^>]+>/g, ""),
-            latestAirdate: airdate
-          };
-        }
-      });
+        // Check if any episode aired in last 7 PST days
+        const hasRecent = episodes.some(ep => {
+          if (!ep.airdate) return false;
+          const epDate = new Date(ep.airdate + "T00:00:00Z");
+          epDate.setHours(epDate.getHours() + PST_OFFSET);
+          const diffDays = (now - epDate) / (1000 * 60 * 60 * 24);
+          return diffDays <= 7 && diffDays >= 0;
+        });
 
-      // Sort descending by latest airdate
-      const sortedShows = Object.values(uniqueShows).sort((a, b) =>
-        new Date(b.latestAirdate) - new Date(a.latestAirdate)
-      );
+        if (!hasRecent) continue;
+
+        // Find latest airdate for sorting
+        const latestAirdate = episodes.reduce((latest, ep) => {
+          if (!ep.airdate) return latest;
+          const epDate = new Date(ep.airdate + "T00:00:00Z");
+          epDate.setHours(epDate.getHours() + PST_OFFSET);
+          return epDate > latest ? epDate : latest;
+        }, new Date(0));
+
+        recentShows.push({
+          id: `tvmaze:${show.id}`,
+          type: "series",
+          name: show.name,
+          poster: show.image?.medium || null,
+          description: (show.summary || "").replace(/<[^>]+>/g, ""),
+          latestAirdate,
+        });
+      }
+
+      // Sort descending by latest episode airdate
+      const sortedShows = recentShows.sort((a, b) => b.latestAirdate - a.latestAirdate);
 
       // Remove latestAirdate before returning
       const metas = sortedShows.map(({ latestAirdate, ...rest }) => rest);
@@ -71,7 +89,7 @@ export default async function handler(req) {
   }
 
   // ------------------------------
-  // 2️⃣ Meta endpoint: show + episodes with thumbnails
+  // 2️⃣ Meta endpoint: return all episodes for the show
   // ------------------------------
   if (id && id.startsWith("tvmaze:") && type === "series") {
     const showId = id.split(":")[1];
