@@ -1,24 +1,15 @@
-// api/index.js
 const axios = require("axios");
 
+const CACHE_DURATION = 15 * 60 * 1000; // 15 minutes
 let cache = {
-  shows: [
-    {
-      id: "placeholder-show",
-      name: "Loading shows...",
-      type: "series",
-      poster: "https://static.tvmaze.com/uploads/images/medium_portrait/1/1.jpg",
-      description: "Fetching recent shows from TVmaze...",
-      episodes: []
-    }
-  ],
+  shows: [],
   lastFetch: 0
 };
 
-const CACHE_DURATION = 15*60*1000; // 15 minutes
+// Helper: format date YYYY-MM-DD
+const formatDate = (d) => d.toISOString().split("T")[0];
 
-const formatDate = d => d.toISOString().split("T")[0];
-
+// Fetch last 7 days from TVmaze in background
 async function fetchTVMazeCache() {
   try {
     const today = new Date();
@@ -26,20 +17,24 @@ async function fetchTVMazeCache() {
     last7Days.setDate(today.getDate() - 6);
 
     const dates = [];
-    for (let d = new Date(last7Days); d <= today; d.setDate(d.getDate()+1)) {
+    for (let d = new Date(last7Days); d <= today; d.setDate(d.getDate() + 1)) {
       dates.push(formatDate(new Date(d)));
     }
 
-    const results = await Promise.all(dates.map(date =>
-      axios.get(`https://api.tvmaze.com/schedule?country=US&date=${date}`)
-        .then(res => res.data)
-        .catch(() => [])
-    ));
+    const results = await Promise.all(
+      dates.map((date) =>
+        axios
+          .get(`https://api.tvmaze.com/schedule?country=US&date=${date}`)
+          .then((res) => res.data)
+          .catch(() => [])
+      )
+    );
 
     const showsMap = {};
-    results.flat().forEach(ep => {
+    results.flat().forEach((ep) => {
       const show = ep.show;
-      if (!show || ["Talk Show","News"].includes(show.type)) return;
+      if (!show || ["Talk Show", "News"].includes(show.type)) return;
+
       const showId = show.id.toString();
       if (!showsMap[showId]) {
         showsMap[showId] = {
@@ -51,6 +46,7 @@ async function fetchTVMazeCache() {
           episodes: []
         };
       }
+
       showsMap[showId].episodes.push({
         id: ep.id.toString(),
         name: ep.name,
@@ -70,24 +66,48 @@ async function fetchTVMazeCache() {
   }
 }
 
-// Trigger background fetch if cache is stale
+// Trigger background fetch if cache stale
 function updateCache() {
   if (Date.now() - cache.lastFetch > CACHE_DURATION) {
-    fetchTVMazeCache(); // async background fetch, do NOT await
+    fetchTVMazeCache(); // do NOT await
   }
 }
 
-// API endpoint
+// API endpoint for Stremio
 module.exports = (req, res) => {
-  updateCache(); // background fetch
-  res.status(200).json({
-    metas: cache.shows.map(s => ({
-      id: s.id,
-      name: s.name,
-      type: "series",
-      poster: s.poster,
-      description: s.description,
-      episodes: s.episodes
-    }))
-  });
+  try {
+    updateCache(); // fetch in background
+
+    // Return cache immediately (or placeholder if empty)
+    const metas =
+      cache.shows.length > 0
+        ? cache.shows
+        : [
+            {
+              id: "placeholder-show",
+              name: "Loading shows...",
+              type: "series",
+              poster: "https://static.tvmaze.com/uploads/images/medium_portrait/1/1.jpg",
+              description: "Fetching recent shows from TVmaze...",
+              episodes: []
+            }
+          ];
+
+    res.status(200).json({ metas });
+  } catch (err) {
+    // Never fail Stremio request
+    res.status(200).json({
+      metas: [
+        {
+          id: "placeholder-show",
+          name: "Loading shows...",
+          type: "series",
+          poster: "https://static.tvmaze.com/uploads/images/medium_portrait/1/1.jpg",
+          description: "API error fallback",
+          episodes: []
+        }
+      ]
+    });
+    console.error(err);
+  }
 };
