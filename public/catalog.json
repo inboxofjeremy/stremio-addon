@@ -1,0 +1,12 @@
+{
+  "metas": [
+    {
+      "id": "250",
+      "type": "series",
+      "name": "Sample Show",
+      "poster": "https://static.tvmaze.com/uploads/images/medium_portrait/1/1.jpg",
+      "description": "Sample show aired in the last 7 days",
+      "posterShape": "regular"
+    }
+  ]
+}
