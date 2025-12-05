@@ -1,5 +1,5 @@
 // /api/index.js
-const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
+// NO node-fetch required — Node 18+ on Vercel already supports global fetch
 
 const MANIFEST = {
   id: "com.yourname.recentmaze",
@@ -16,7 +16,7 @@ const MANIFEST = {
     }
   ],
   idPrefixes: ["tvmaze:"],
-  endpoint: "" // will be injected dynamically
+  endpoint: "" // will get filled dynamically
 };
 
 module.exports = async (req, res) => {
@@ -25,16 +25,12 @@ module.exports = async (req, res) => {
     const endpoint = `https://${req.headers.host}/api`;
     MANIFEST.endpoint = endpoint;
 
-    // ───────────────────────────────────────────────
-    // 1) RETURN MANIFEST
-    // ───────────────────────────────────────────────
+    // ───── MANIFEST ─────────────────────────────────────────
     if (url.searchParams.has("manifest")) {
       return res.status(200).json(MANIFEST);
     }
 
-    // ───────────────────────────────────────────────
-    // 2) CATALOG: ?catalog=recent
-    // ───────────────────────────────────────────────
+    // ───── CATALOG ───────────────────────────────────────────
     if (url.searchParams.get("catalog") === "recent") {
       const today = new Date();
       const days = [];
@@ -45,26 +41,29 @@ module.exports = async (req, res) => {
         days.push(d.toISOString().split("T")[0]);
       }
 
-      // Request all 7 days of schedule
       const results = [];
+
       for (const day of days) {
         const r = await fetch(`https://api.tvmaze.com/schedule?country=US&date=${day}`);
-        if (r.ok) results.push(...await r.json());
+        if (r.ok) {
+          results.push(...(await r.json()));
+        }
       }
 
-      // Deduplicate shows
       const map = new Map();
+
       for (const item of results) {
         if (!item.show || !item.show.id) continue;
 
         const id = `tvmaze:${item.show.id}`;
+
         if (!map.has(id)) {
           map.set(id, {
             id,
             type: "series",
             name: item.show.name,
             poster: item.show.image?.medium || null,
-            description: item.show.summary?.replace(/<[^>]+>/g, "") || "",
+            description: (item.show.summary || "").replace(/<[^>]*>/g, "")
           });
         }
       }
@@ -72,22 +71,22 @@ module.exports = async (req, res) => {
       return res.status(200).json({ metas: [...map.values()] });
     }
 
-    // ───────────────────────────────────────────────
-    // 3) META: ?meta=tvmaze:12345
-    // ───────────────────────────────────────────────
+    // ───── META ──────────────────────────────────────────────
     if (url.searchParams.has("meta")) {
       const fullId = url.searchParams.get("meta");
       const tvmazeId = fullId.split(":")[1];
 
+      // get show
       const showRes = await fetch(`https://api.tvmaze.com/shows/${tvmazeId}`);
       if (!showRes.ok) return res.status(404).json({});
 
       const show = await showRes.json();
 
+      // get episodes
       const epsRes = await fetch(`https://api.tvmaze.com/shows/${tvmazeId}/episodes`);
-      const episodesRaw = epsRes.ok ? await epsRes.json() : [];
+      const epsRaw = epsRes.ok ? await epsRes.json() : [];
 
-      const episodes = episodesRaw.map(ep => ({
+      const episodes = epsRaw.map(ep => ({
         id: `tvmaze:${tvmazeId}:s${ep.season}e${ep.number}`,
         type: "episode",
         series: `tvmaze:${tvmazeId}`,
@@ -102,18 +101,18 @@ module.exports = async (req, res) => {
         type: "series",
         name: show.name,
         poster: show.image?.original || show.image?.medium || null,
-        description: show.summary?.replace(/<[^>]+>/g, "") || "",
+        description: (show.summary || "").replace(/<[^>]*>/g, ""),
         episodes
       };
 
       return res.status(200).json({ meta });
     }
 
-    // Default response so browser always loads
-    res.status(200).json({ status: "addon online" });
+    // default
+    res.status(200).json({ status: "online" });
 
   } catch (err) {
     console.error("Addon error:", err);
-    return res.status(500).json({ error: err.toString() });
+    res.status(500).json({ error: err.toString() });
   }
 };
