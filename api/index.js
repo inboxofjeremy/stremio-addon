@@ -8,9 +8,13 @@ const HEADERS = {
 // -----------------------------
 // In-memory cache
 // -----------------------------
-let CATALOG_CACHE = null;
+let CATALOG_CACHE = [];
 let CACHE_TIMESTAMP = 0;
 const CACHE_TTL = 1000 * 60 * 180; // 3 hours
+
+// Track scan progress
+let SCAN_IN_PROGRESS = false;
+let CURRENT_PAGE = 0;
 
 // -----------------------------
 // Safe fetch with retry
@@ -32,7 +36,7 @@ async function fetchWithRetry(url, retries = 2) {
 }
 
 // -----------------------------
-// Check PST last 7 days
+// Check last 7 PST days
 // -----------------------------
 function inLast7PstDays(airdate) {
   if (!airdate) return false;
@@ -48,51 +52,59 @@ function inLast7PstDays(airdate) {
 }
 
 // -----------------------------
-// Build full catalog (all shows + episodes)
+// Progressive catalog build
 // -----------------------------
-async function buildCatalog() {
-  console.log("Building full catalog…");
-  const MAX_PAGES = 20; // ~5000 shows
-  const excluded = ["Talk Show", "News"];
-  const recentShows = [];
+async function progressiveBuild() {
+  if (SCAN_IN_PROGRESS) return;
+  SCAN_IN_PROGRESS = true;
 
-  for (let page = 0; page < MAX_PAGES; page++) {
-    const shows = await fetchWithRetry(`https://api.tvmaze.com/shows?page=${page}`);
-    if (!Array.isArray(shows)) continue;
+  const MAX_PAGES = 20; // adjust if needed
+  const excludedTypes = ["Talk Show", "News"];
 
-    for (const s of shows) {
-      if (excluded.includes(s.type)) continue;
+  while (CURRENT_PAGE < MAX_PAGES) {
+    try {
+      const shows = await fetchWithRetry(`https://api.tvmaze.com/shows?page=${CURRENT_PAGE}`);
+      if (!Array.isArray(shows)) break;
 
-      const eps = await fetchWithRetry(`https://api.tvmaze.com/shows/${s.id}/episodes`);
-      if (!eps) continue;
+      for (const s of shows) {
+        if (excludedTypes.includes(s.type)) continue;
 
-      const recentEps = eps.filter(e => inLast7PstDays(e.airdate));
-      if (!recentEps.length) continue;
+        const eps = await fetchWithRetry(`https://api.tvmaze.com/shows/${s.id}/episodes`);
+        if (!Array.isArray(eps)) continue;
 
-      const latest = recentEps.reduce((a, b) => (a.airdate > b.airdate ? a : b)).airdate;
+        const recentEps = eps.filter(e => inLast7PstDays(e.airdate));
+        if (!recentEps.length) continue;
 
-      recentShows.push({
-        id: `tvmaze:${s.id}`,
-        type: "series",
-        name: s.name,
-        poster:
-          s.image?.medium ||
-          s.image?.original ||
-          "https://static.strem.io/assets/placeholders/series.png",
-        description: s.summary?.replace(/<[^>]*>/g, "") || "",
-        latestAirdate: latest
-      });
+        const latest = recentEps.reduce((a, b) => (a.airdate > b.airdate ? a : b)).airdate;
+
+        // Avoid duplicates
+        if (!CATALOG_CACHE.some(x => x.id === `tvmaze:${s.id}`)) {
+          CATALOG_CACHE.push({
+            id: `tvmaze:${s.id}`,
+            type: "series",
+            name: s.name,
+            poster:
+              s.image?.medium ||
+              s.image?.original ||
+              "https://static.strem.io/assets/placeholders/series.png",
+            description: s.summary?.replace(/<[^>]*>/g, "") || "",
+            latestAirdate: latest
+          });
+        }
+      }
+
+      CURRENT_PAGE++;
+    } catch (err) {
+      console.error("Progressive scan error:", err);
+      break;
     }
   }
 
-  // Sort newest → oldest
-  recentShows.sort((a, b) => (a.latestAirdate < b.latestAirdate ? 1 : -1));
-
-  CATALOG_CACHE = recentShows;
+  // Sort by latest airdate descending
+  CATALOG_CACHE.sort((a, b) => (a.latestAirdate < b.latestAirdate ? 1 : -1));
   CACHE_TIMESTAMP = Date.now();
-
-  console.log(`Catalog built with ${recentShows.length} shows`);
-  return recentShows;
+  SCAN_IN_PROGRESS = false;
+  console.log(`Progressive catalog build complete. Total shows: ${CATALOG_CACHE.length}`);
 }
 
 // -----------------------------
@@ -104,13 +116,15 @@ export default async function handler(req, res) {
 
   const { manifest, catalog, type, id } = req.query;
 
+  // -----------------------
   // MANIFEST
+  // -----------------------
   if (manifest !== undefined) {
     return res.status(200).json({
       id: "recent.tvmaze",
-      version: "4.0.0",
+      version: "5.0.0",
       name: "Recent Episodes (TVmaze)",
-      description: "Shows with episodes in last 7 PST days",
+      description: "Shows with episodes in the last 7 PST days",
       types: ["series"],
       resources: ["catalog", "meta"],
       catalogs: [{ id: "recent", type: "series", name: "Recent Episodes (7 days)" }],
@@ -119,21 +133,26 @@ export default async function handler(req, res) {
     });
   }
 
+  // -----------------------
   // CATALOG
+  // -----------------------
   if (catalog === "recent" && type === "series") {
     const expired = Date.now() - CACHE_TIMESTAMP > CACHE_TTL;
 
-    if (CATALOG_CACHE && !expired) {
-      console.log("Serving catalog from cache");
+    // Serve cached catalog if available
+    if (CATALOG_CACHE.length > 0 && !expired) {
+      if (!SCAN_IN_PROGRESS) progressiveBuild(); // refresh cache in background
       return res.status(200).json({ metas: CATALOG_CACHE });
     }
 
-    console.log("Rebuilding full catalog...");
-    const data = await buildCatalog();
-    return res.status(200).json({ metas: data });
+    // Start progressive build if cache is empty or expired
+    progressiveBuild(); 
+    return res.status(200).json({ metas: CATALOG_CACHE });
   }
 
+  // -----------------------
   // META
+  // -----------------------
   if (id && id.startsWith("tvmaze:") && type === "series") {
     const showId = id.replace("tvmaze:", "");
     const show = await fetchWithRetry(`https://api.tvmaze.com/shows/${showId}`);
@@ -164,5 +183,8 @@ export default async function handler(req, res) {
     });
   }
 
+  // -----------------------
+  // DEFAULT
+  // -----------------------
   return res.status(200).json({ status: "ok" });
-}
+};
