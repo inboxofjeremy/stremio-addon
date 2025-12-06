@@ -1,6 +1,6 @@
-// ----------------------------------------------------
-// HEADERS
-// ----------------------------------------------------
+// -----------------------------
+// CORS + HEADERS
+// -----------------------------
 const HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET,OPTIONS",
@@ -8,18 +8,9 @@ const HEADERS = {
   "Content-Type": "application/json"
 };
 
-// ----------------------------------------------------
-// CACHES
-// ----------------------------------------------------
-const SHOW_CACHE_TTL = 24 * 60 * 60 * 1000;   // 24 hours
-const CATALOG_CACHE_TTL = 5 * 60 * 1000;      // 5 minutes
-
-const showCache = new Map();     // key: showId, value: { timestamp, eps }
-const catalogCache = { timestamp: 0, data: [] };
-
-// ----------------------------------------------------
-// SAFE FETCH WITH RETRY
-// ----------------------------------------------------
+// -----------------------------
+// Safe Fetch with Retry
+// -----------------------------
 async function fetchWithRetry(url, retries = 2) {
   for (let i = 0; i <= retries; i++) {
     try {
@@ -31,69 +22,51 @@ async function fetchWithRetry(url, retries = 2) {
         console.error("Fetch failed:", url, err.message);
         return null;
       }
-      await new Promise(r => setTimeout(r, 150));
+      await new Promise(r => setTimeout(r, 200));
     }
   }
 }
 
-// ----------------------------------------------------
-// LAST 7 DAYS (PST)
-// ----------------------------------------------------
+// -----------------------------
+// Check if airdate is within last 7 PST days
+// -----------------------------
 function inLast7PstDays(airdate) {
   if (!airdate) return false;
+
   const now = new Date();
-  const pst = new Date(
+  const pstNow = new Date(
     now.toLocaleString("en-US", { timeZone: "America/Los_Angeles" })
   );
 
   const days = [];
   for (let i = 0; i < 7; i++) {
-    const d = new Date(pst);
-    d.setDate(pst.getDate() - i);
+    const d = new Date(pstNow);
+    d.setDate(pstNow.getDate() - i);
     days.push(d.toISOString().split("T")[0]);
   }
+
   return days.includes(airdate);
 }
 
-// ----------------------------------------------------
-// FETCH SHOW EPISODES WITH CACHING
-// ----------------------------------------------------
-async function getShowEpisodes(showId) {
-  const cached = showCache.get(showId);
-
-  if (cached && Date.now() - cached.timestamp < SHOW_CACHE_TTL) {
-    return cached.eps;
-  }
-
-  const eps = await fetchWithRetry(`https://api.tvmaze.com/shows/${showId}/episodes`);
-  if (!eps) return [];
-
-  showCache.set(showId, {
-    timestamp: Date.now(),
-    eps
-  });
-
-  return eps;
-}
-
-// ----------------------------------------------------
+// -----------------------------
 // MAIN HANDLER
-// ----------------------------------------------------
+// -----------------------------
 export default async function handler(req, res) {
+  // CORS
   for (const h in HEADERS) res.setHeader(h, HEADERS[h]);
   if (req.method === "OPTIONS") return res.status(200).end();
 
   const { manifest, catalog, type, id } = req.query;
 
-  // ----------------------------------------------------
+  // -----------------------------
   // MANIFEST
-  // ----------------------------------------------------
+  // -----------------------------
   if (manifest !== undefined) {
     return res.status(200).json({
       id: "recent.tvmaze",
       version: "1.0.0",
       name: "Recent Episodes (TVmaze)",
-      description: "Shows with episodes aired in last 7 PST days",
+      description: "Shows that aired episodes in the last 7 PST days",
       types: ["series"],
       resources: ["catalog", "meta"],
       catalogs: [
@@ -104,36 +77,40 @@ export default async function handler(req, res) {
     });
   }
 
-  // ----------------------------------------------------
-  // CATALOG
-  // ----------------------------------------------------
+  // =================================================================
+  // CATALOG — USE EPISODES ONLY, SORT BY LATEST AIRDATE, EXCLUDE TALK/NEWS
+  // =================================================================
   if (catalog === "recent" && type === "series") {
-
-    // Return cache if fresh
-    if (Date.now() - catalogCache.timestamp < CATALOG_CACHE_TTL) {
-      return res.status(200).json({ metas: catalogCache.data });
-    }
-
     try {
       const MAX_PAGES = 20; // ~5000 shows
       const recentShows = [];
+      const excluded = ["Talk Show", "News"];
 
       for (let page = 0; page < MAX_PAGES; page++) {
         const shows = await fetchWithRetry(`https://api.tvmaze.com/shows?page=${page}`);
         if (!Array.isArray(shows)) continue;
 
-        // small chunk batching
         const chunkSize = 10;
+
         for (let i = 0; i < shows.length; i += chunkSize) {
           const chunk = shows.slice(i, i + chunkSize);
 
           const results = await Promise.all(
             chunk.map(async s => {
-              const eps = await getShowEpisodes(s.id);
-              if (!eps || !eps.length) return null;
+              // Exclude show types
+              if (excluded.includes(s.type)) return null;
 
-              const hasRecent = eps.some(e => inLast7PstDays(e.airdate));
-              if (!hasRecent) return null;
+              const eps = await fetchWithRetry(`https://api.tvmaze.com/shows/${s.id}/episodes`);
+              if (!eps) return null;
+
+              // Filter recent episodes (last 7 PST days)
+              const recentEps = eps.filter(e => inLast7PstDays(e.airdate));
+              if (recentEps.length === 0) return null;
+
+              // Determine latest airdate for sorting
+              const latest = recentEps.reduce((a, b) =>
+                a.airdate > b.airdate ? a : b
+              ).airdate;
 
               return {
                 id: `tvmaze:${s.id}`,
@@ -143,7 +120,8 @@ export default async function handler(req, res) {
                   s.image?.medium ||
                   s.image?.original ||
                   "https://static.strem.io/assets/placeholders/series.png",
-                description: s.summary?.replace(/<[^>]*>/g, "") || ""
+                description: s.summary?.replace(/<[^>]*>/g, "") || "",
+                latestAirdate: latest
               };
             })
           );
@@ -152,30 +130,25 @@ export default async function handler(req, res) {
         }
       }
 
-      catalogCache.timestamp = Date.now();
-      catalogCache.data = recentShows;
+      // Sort newest → oldest
+      recentShows.sort((a, b) => a.latestAirdate < b.latestAirdate ? 1 : -1);
 
       return res.status(200).json({ metas: recentShows });
-
     } catch (err) {
       console.error("CATALOG ERROR:", err);
-
-      // fallback to cached data if possible
-      return res.status(200).json({
-        metas: catalogCache.data || []
-      });
+      return res.status(200).json({ metas: [] });
     }
   }
 
-  // ----------------------------------------------------
-  // META
-  // ----------------------------------------------------
+  // =================================================================
+  // META — FULL SHOW DETAILS + ALL EPISODES
+  // =================================================================
   if (id && id.startsWith("tvmaze:") && type === "series") {
     try {
       const showId = id.replace("tvmaze:", "");
 
       const show = await fetchWithRetry(`https://api.tvmaze.com/shows/${showId}`);
-      const eps = await getShowEpisodes(showId);
+      const eps = await fetchWithRetry(`https://api.tvmaze.com/shows/${showId}/episodes`) || [];
 
       return res.status(200).json({
         meta: {
@@ -185,7 +158,8 @@ export default async function handler(req, res) {
           poster:
             show?.image?.original ||
             show?.image?.medium ||
-            eps[0]?.image?.original ||
+            eps?.[0]?.image?.original ||
+            eps?.[0]?.image?.medium ||
             "https://static.strem.io/assets/placeholders/series.png",
           description: show?.summary?.replace(/<[^>]*>/g, "") || "",
           episodes: eps.map(e => ({
@@ -200,12 +174,14 @@ export default async function handler(req, res) {
           }))
         }
       });
-
     } catch (err) {
       console.error("META ERROR:", err);
       return res.status(200).json({ meta: {} });
     }
   }
 
+  // -----------------------------
+  // DEFAULT ENDPOINT
+  // -----------------------------
   return res.status(200).json({ status: "ok" });
 }
