@@ -2,15 +2,11 @@
   "id": "recent.tvmaze",
   "version": "1.0.0",
   "name": "Recent Episodes (TVmaze)",
-  "description": "Shows with episodes aired in the last 7 days (PST).",
-  "resources": ["catalog", "meta"],
+  "description": "Shows with episodes aired in the last 7 PST days",
   "types": ["series"],
+  "resources": ["catalog", "meta"],
   "catalogs": [
-    {
-      "id": "recent",
-      "type": "series",
-      "name": "Recent Episodes (7 days)"
-    }
+    { "id": "recent", "type": "series", "name": "Recent Episodes (7 days)" }
   ],
   "idPrefixes": ["tvmaze:"],
   "endpoint": "https://stremio-addon-three.vercel.app/api"
