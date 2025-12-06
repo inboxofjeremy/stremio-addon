@@ -48,7 +48,7 @@ function inLast7PstDays(airdate) {
 }
 
 // -----------------------------
-// Build full catalog (Option A)
+// Build full catalog (all shows + episodes)
 // -----------------------------
 async function buildCatalog() {
   console.log("Building full catalog…");
@@ -69,7 +69,6 @@ async function buildCatalog() {
       const recentEps = eps.filter(e => inLast7PstDays(e.airdate));
       if (!recentEps.length) continue;
 
-      // Determine latest airdate for sorting
       const latest = recentEps.reduce((a, b) => (a.airdate > b.airdate ? a : b)).airdate;
 
       recentShows.push({
@@ -86,7 +85,7 @@ async function buildCatalog() {
     }
   }
 
-  // Sort by latest episode airdate descending
+  // Sort newest → oldest
   recentShows.sort((a, b) => (a.latestAirdate < b.latestAirdate ? 1 : -1));
 
   CATALOG_CACHE = recentShows;
@@ -109,9 +108,9 @@ export default async function handler(req, res) {
   if (manifest !== undefined) {
     return res.status(200).json({
       id: "recent.tvmaze",
-      version: "3.0.0",
+      version: "4.0.0",
       name: "Recent Episodes (TVmaze)",
-      description: "Shows with episodes in the last 7 PST days",
+      description: "Shows with episodes in last 7 PST days",
       types: ["series"],
       resources: ["catalog", "meta"],
       catalogs: [{ id: "recent", type: "series", name: "Recent Episodes (7 days)" }],
@@ -129,7 +128,7 @@ export default async function handler(req, res) {
       return res.status(200).json({ metas: CATALOG_CACHE });
     }
 
-    console.log("Rebuilding catalog from all shows…");
+    console.log("Rebuilding full catalog...");
     const data = await buildCatalog();
     return res.status(200).json({ metas: data });
   }
