@@ -1,3 +1,6 @@
+// ----------------------------------------------------
+// HEADERS
+// ----------------------------------------------------
 const HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET,OPTIONS",
@@ -5,7 +8,18 @@ const HEADERS = {
   "Content-Type": "application/json"
 };
 
-// fetch with retry wrapper
+// ----------------------------------------------------
+// CACHES
+// ----------------------------------------------------
+const SHOW_CACHE_TTL = 24 * 60 * 60 * 1000;   // 24 hours
+const CATALOG_CACHE_TTL = 5 * 60 * 1000;      // 5 minutes
+
+const showCache = new Map();     // key: showId, value: { timestamp, eps }
+const catalogCache = { timestamp: 0, data: [] };
+
+// ----------------------------------------------------
+// SAFE FETCH WITH RETRY
+// ----------------------------------------------------
 async function fetchWithRetry(url, retries = 2) {
   for (let i = 0; i <= retries; i++) {
     try {
@@ -17,36 +31,63 @@ async function fetchWithRetry(url, retries = 2) {
         console.error("Fetch failed:", url, err.message);
         return null;
       }
-      await new Promise(r => setTimeout(r, 200));
+      await new Promise(r => setTimeout(r, 150));
     }
   }
 }
 
-// check last 7 PST days
+// ----------------------------------------------------
+// LAST 7 DAYS (PST)
+// ----------------------------------------------------
 function inLast7PstDays(airdate) {
   if (!airdate) return false;
   const now = new Date();
-  const pstNow = new Date(
+  const pst = new Date(
     now.toLocaleString("en-US", { timeZone: "America/Los_Angeles" })
   );
+
   const days = [];
   for (let i = 0; i < 7; i++) {
-    const d = new Date(pstNow);
-    d.setDate(pstNow.getDate() - i);
+    const d = new Date(pst);
+    d.setDate(pst.getDate() - i);
     days.push(d.toISOString().split("T")[0]);
   }
   return days.includes(airdate);
 }
 
+// ----------------------------------------------------
+// FETCH SHOW EPISODES WITH CACHING
+// ----------------------------------------------------
+async function getShowEpisodes(showId) {
+  const cached = showCache.get(showId);
+
+  if (cached && Date.now() - cached.timestamp < SHOW_CACHE_TTL) {
+    return cached.eps;
+  }
+
+  const eps = await fetchWithRetry(`https://api.tvmaze.com/shows/${showId}/episodes`);
+  if (!eps) return [];
+
+  showCache.set(showId, {
+    timestamp: Date.now(),
+    eps
+  });
+
+  return eps;
+}
+
+// ----------------------------------------------------
+// MAIN HANDLER
+// ----------------------------------------------------
 export default async function handler(req, res) {
   for (const h in HEADERS) res.setHeader(h, HEADERS[h]);
   if (req.method === "OPTIONS") return res.status(200).end();
 
   const { manifest, catalog, type, id } = req.query;
 
-  // -----------------------
+  // ----------------------------------------------------
   // MANIFEST
-  // -----------------------
+  // ----------------------------------------------------
   if (manifest !== undefined) {
     return res.status(200).json({
       id: "recent.tvmaze",
@@ -63,10 +104,16 @@ export default async function handler(req, res) {
     });
   }
 
-  // -----------------------
-  // CATALOG (NO schedule, episodes-only)
-  // -----------------------
+  // ----------------------------------------------------
+  // CATALOG
+  // ----------------------------------------------------
   if (catalog === "recent" && type === "series") {
+
+    // Return cache if fresh
+    if (Date.now() - catalogCache.timestamp < CATALOG_CACHE_TTL) {
+      return res.status(200).json({ metas: catalogCache.data });
+    }
+
     try {
       const MAX_PAGES = 20; // ~5000 shows
       const recentShows = [];
@@ -75,14 +122,15 @@ export default async function handler(req, res) {
         const shows = await fetchWithRetry(`https://api.tvmaze.com/shows?page=${page}`);
         if (!Array.isArray(shows)) continue;
 
+        // small chunk batching
         const chunkSize = 10;
         for (let i = 0; i < shows.length; i += chunkSize) {
           const chunk = shows.slice(i, i + chunkSize);
 
           const results = await Promise.all(
             chunk.map(async s => {
-              const eps = await fetchWithRetry(`https://api.tvmaze.com/shows/${s.id}/episodes`);
-              if (!eps) return null;
+              const eps = await getShowEpisodes(s.id);
+              if (!eps || !eps.length) return null;
 
               const hasRecent = eps.some(e => inLast7PstDays(e.airdate));
               if (!hasRecent) return null;
@@ -104,22 +152,30 @@ export default async function handler(req, res) {
         }
       }
 
+      catalogCache.timestamp = Date.now();
+      catalogCache.data = recentShows;
+
       return res.status(200).json({ metas: recentShows });
+
     } catch (err) {
       console.error("CATALOG ERROR:", err);
-      return res.status(200).json({ metas: [] });
+
+      // fallback to cached data if possible
+      return res.status(200).json({
+        metas: catalogCache.data || []
+      });
     }
   }
 
-  // -----------------------
+  // ----------------------------------------------------
   // META
-  // -----------------------
+  // ----------------------------------------------------
   if (id && id.startsWith("tvmaze:") && type === "series") {
     try {
       const showId = id.replace("tvmaze:", "");
 
       const show = await fetchWithRetry(`https://api.tvmaze.com/shows/${showId}`);
-      const eps = await fetchWithRetry(`https://api.tvmaze.com/shows/${showId}/episodes`) || [];
+      const eps = await getShowEpisodes(showId);
 
       return res.status(200).json({
         meta: {
@@ -130,7 +186,6 @@ export default async function handler(req, res) {
             show?.image?.original ||
             show?.image?.medium ||
             eps[0]?.image?.original ||
-            eps[0]?.image?.medium ||
             "https://static.strem.io/assets/placeholders/series.png",
           description: show?.summary?.replace(/<[^>]*>/g, "") || "",
           episodes: eps.map(e => ({
@@ -145,6 +200,7 @@ export default async function handler(req, res) {
           }))
         }
       });
+
     } catch (err) {
       console.error("META ERROR:", err);
       return res.status(200).json({ meta: {} });
